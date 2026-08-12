@@ -86,10 +86,25 @@ struct ChessMove: Hashable, Sendable {
 /// later be drawn with different colors, textures, animations, or themes.
 struct ThreatCorridor: Hashable, Sendable, Identifiable {
     let origin: Square
+    let endpoint: Square?
     let piece: Piece
     let threatenedSquares: Set<Square>
 
-    var id: Square { origin }
+    var id: String { "\(origin.algebraic)-\(endpoint?.algebraic ?? "all")" }
+}
+
+enum ThreatDisplayMode: String, CaseIterable, Sendable, Identifiable {
+    case enemyContact
+    case allThreats
+
+    var id: Self { self }
+
+    var displayName: String {
+        switch self {
+        case .enemyContact: "Enemy contact"
+        case .allThreats: "All threats"
+        }
+    }
 }
 
 enum PositionStatus: Equatable, Sendable {

@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var game = ChessGame()
-    @State private var showsThreatCorridors = true
+    @State private var threatDisplayMode: ThreatDisplayMode = .enemyContact
 
     var body: some View {
         GeometryReader { geometry in
@@ -29,7 +29,7 @@ struct ContentView: View {
     }
 
     private var board: some View {
-        ChessBoardView(game: game, showsThreatCorridors: showsThreatCorridors)
+        ChessBoardView(game: game, threatDisplayMode: threatDisplayMode)
             .aspectRatio(1, contentMode: .fit)
             .frame(maxWidth: 720, maxHeight: 720)
             .shadow(color: .black.opacity(0.2), radius: 18, y: 8)
@@ -54,22 +54,16 @@ struct ContentView: View {
                     .font(.title3.weight(.semibold))
             }
 
-            Text("Threats update automatically as pieces move. Border weight shows how many pieces attack each square.")
+            Text("Enemy Contact shows only directional corridors that end on an opposing piece. Border weight still shows stacking.")
                 .foregroundStyle(.secondary)
 
-            Button {
-                showsThreatCorridors.toggle()
-            } label: {
-                Label(
-                    showsThreatCorridors ? "Hide all threats" : "Show all threats",
-                    systemImage: showsThreatCorridors ? "eye.slash" : "eye"
-                )
-                    .frame(maxWidth: .infinity)
+            Picker("Threat display", selection: $threatDisplayMode) {
+                ForEach(ThreatDisplayMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
-            .tint(.purple)
-            .accessibilityHint("Toggles the complete passive threat map")
+            .pickerStyle(.segmented)
+            .accessibilityHint("Switches between enemy-contact corridors and the complete threat map")
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Jump to a position")
@@ -122,9 +116,11 @@ struct ContentView: View {
 
 private struct ChessBoardView: View {
     @ObservedObject var game: ChessGame
-    let showsThreatCorridors: Bool
+    let threatDisplayMode: ThreatDisplayMode
 
     var body: some View {
+        let visibleCorridors = game.threatCorridors(for: threatDisplayMode)
+
         VStack(spacing: 0) {
             ForEach(Array((0..<8).reversed()), id: \.self) { rank in
                 HStack(spacing: 0) {
@@ -137,9 +133,9 @@ private struct ChessBoardView: View {
                             isLegalTarget: game.legalTargets.contains(square),
                             isLastMove: game.lastMove?.from == square || game.lastMove?.to == square,
                             isCheckedKing: game.isKingInCheck(at: square),
-                            threatCorridors: showsThreatCorridors
-                                ? game.threatCorridors(reaching: square)
-                                : []
+                            threatCorridors: visibleCorridors.filter {
+                                $0.threatenedSquares.contains(square)
+                            }
                         ) {
                             game.tap(square)
                         }

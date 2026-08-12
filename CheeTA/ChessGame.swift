@@ -64,14 +64,33 @@ final class ChessGame: ObservableObject {
         board.map { origin, piece in
             ThreatCorridor(
                 origin: origin,
+                endpoint: nil,
                 piece: piece,
                 threatenedSquares: Set(Self.attackSquares(from: origin, on: board))
             )
         }
     }
 
-    func threatCorridors(reaching square: Square) -> [ThreatCorridor] {
-        threatCorridors.filter { $0.threatenedSquares.contains(square) }
+    func threatCorridors(for mode: ThreatDisplayMode) -> [ThreatCorridor] {
+        switch mode {
+        case .enemyContact:
+            board.flatMap { origin, piece in
+                Self.enemyContactCorridors(
+                    from: origin,
+                    piece: piece,
+                    on: board
+                )
+            }
+        case .allThreats:
+            threatCorridors
+        }
+    }
+
+    func threatCorridors(
+        reaching square: Square,
+        mode: ThreatDisplayMode = .allThreats
+    ) -> [ThreatCorridor] {
+        threatCorridors(for: mode).filter { $0.threatenedSquares.contains(square) }
     }
 
     func tap(_ square: Square) {
@@ -297,6 +316,59 @@ extension ChessGame {
         case .pawn:
             let step = piece.player == .white ? 1 : -1
             return [-1, 1].compactMap { origin.offset(file: $0, rank: step) }
+        }
+    }
+
+    private static func enemyContactCorridors(
+        from origin: Square,
+        piece: Piece,
+        on board: [Square: Piece]
+    ) -> [ThreatCorridor] {
+        let orthogonal = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        let diagonal = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
+
+        let slidingDirections: [(Int, Int)]?
+        switch piece.kind {
+        case .rook:
+            slidingDirections = orthogonal
+        case .bishop:
+            slidingDirections = diagonal
+        case .queen:
+            slidingDirections = orthogonal + diagonal
+        case .king, .knight, .pawn:
+            slidingDirections = nil
+        }
+
+        if let slidingDirections {
+            return slidingDirections.compactMap { direction in
+                let path = raySquares(
+                    from: origin,
+                    directions: [direction],
+                    on: board
+                )
+                guard let endpoint = path.last,
+                      board[endpoint]?.player == piece.player.opponent else {
+                    return nil
+                }
+                return ThreatCorridor(
+                    origin: origin,
+                    endpoint: endpoint,
+                    piece: piece,
+                    threatenedSquares: Set(path)
+                )
+            }
+        }
+
+        return attackSquares(from: origin, on: board).compactMap { endpoint in
+            guard board[endpoint]?.player == piece.player.opponent else {
+                return nil
+            }
+            return ThreatCorridor(
+                origin: origin,
+                endpoint: endpoint,
+                piece: piece,
+                threatenedSquares: [endpoint]
+            )
         }
     }
 

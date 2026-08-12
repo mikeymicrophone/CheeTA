@@ -114,6 +114,37 @@ final class ChessGameTests: XCTestCase {
         XCTAssertTrue(bishop?.threatenedSquares.contains(Square("e7")!) == true)
         XCTAssertTrue(bishop?.threatenedSquares.contains(Square("d8")!) == true)
         XCTAssertEqual(game.piece(at: Square("d8")!), Piece(kind: .queen, player: .black))
+        let queenCorridor = game.threatCorridors(for: .enemyContact).first {
+            $0.origin == Square("g5")! && $0.endpoint == Square("d8")!
+        }
+        XCTAssertEqual(
+            queenCorridor?.threatenedSquares,
+            Set([Square("f6")!, Square("e7")!, Square("d8")!])
+        )
+        XCTAssertFalse(queenCorridor?.threatenedSquares.contains(Square("f4")!) == true)
+    }
+
+    func testEnemyContactModeHidesCorridorsWithoutAnEnemyPiece() {
+        let game = ChessGame()
+
+        XCTAssertTrue(game.threatCorridors(for: .enemyContact).isEmpty)
+        XCTAssertEqual(game.threatCorridors(for: .allThreats).count, 32)
+    }
+
+    func testNonSlidingEnemyContactEndsOnTheEnemySquareOnly() {
+        let board = makeBoard([
+            ("e1", .king, .white),
+            ("f3", .knight, .white),
+            ("e5", .pawn, .black),
+            ("e8", .king, .black)
+        ])
+        let game = ChessGame(board: board)
+
+        let knightCorridor = game.threatCorridors(for: .enemyContact).first {
+            $0.origin == Square("f3")! && $0.endpoint == Square("e5")!
+        }
+
+        XCTAssertEqual(knightCorridor?.threatenedSquares, Set([Square("e5")!]))
     }
 
     func testCapturedPieceStopsContributingPassiveThreats() {
@@ -143,7 +174,10 @@ final class ChessGameTests: XCTestCase {
         ])
         let game = ChessGame(board: board)
 
-        let overlapping = game.threatCorridors(reaching: Square("d4")!)
+        let overlapping = game.threatCorridors(
+            reaching: Square("d4")!,
+            mode: .enemyContact
+        )
 
         XCTAssertEqual(overlapping.count, 3)
         XCTAssertEqual(overlapping.filter { $0.piece.player == .white }.count, 2)
