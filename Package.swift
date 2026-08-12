@@ -24,13 +24,15 @@ let package = Package(
                 "CutSceneStyle.swift",
                 "EnPassantCutSceneViews.swift",
                 "FirstCaptureCutSceneView.swift",
+                "GameBrowserView.swift",
                 "QueenDownCutSceneView.swift",
                 "RealityChessBoardView.swift",
                 "ReplayControls.swift"
             ],
             sources: [
                 "ChessTypes.swift",
-                "ChessGame.swift"
+                "ChessGame.swift",
+                "GameLibrary.swift"
             ]
         ),
         .testTarget(

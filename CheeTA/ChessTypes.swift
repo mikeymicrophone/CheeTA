@@ -114,6 +114,9 @@ struct RecordedPly: Hashable, Sendable {
     let capture: Capture?
     let boardAfter: [Square: Piece]
     let playerToMoveAfter: Player
+    /// The position's verdict once this ply landed, so a game loaded from
+    /// history can tell where its checks and its ending were.
+    let statusAfter: PositionStatus
 }
 
 /// A single step of playback.
@@ -237,7 +240,7 @@ enum ThreatDisplayMode: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
-enum PositionStatus: Equatable, Sendable {
+enum PositionStatus: Hashable, Sendable {
     case playing
     case check(Player)
     case checkmate(winner: Player)

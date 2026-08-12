@@ -18,7 +18,12 @@ struct ContentView: View {
     @State private var cutSceneLog: [CutSceneEvent] = []
     @State private var isReelPresented = false
     @State private var isFENTransferPresented = false
+    /// Reconstructing an earlier position should not replay its old cut scenes
+    /// as if the player had just made those moves again.
+    @State private var suppressCutSceneTriggers = false
+    @State private var isGameBrowserPresented = false
     @StateObject private var replay = ReplayPlayer()
+    @StateObject private var gameLibrary = GameLibrary()
 
     var body: some View {
         VStack(spacing: 20) {
@@ -40,6 +45,11 @@ struct ContentView: View {
         .background(Color(.systemBackground))
         .sheet(isPresented: $isFENTransferPresented) {
             FENTransferSheet(game: game)
+        }
+        .sheet(isPresented: $isGameBrowserPresented) {
+            GameBrowserView(library: gameLibrary, palette: piecePalette) { stored in
+                load(stored)
+            }
         }
         .overlay {
             if let checkCutScene {
@@ -152,7 +162,9 @@ struct ContentView: View {
         .sensoryFeedback(.selection, trigger: enPassantOpportunityCutScene?.id)
         .sensoryFeedback(.success, trigger: enPassantCaptureCutScene?.id)
         .onChange(of: game.captureCount) { _, newCount in
-            guard newCount > 0, let capture = game.lastCapture else { return }
+            guard !suppressCutSceneTriggers,
+                  newCount > 0,
+                  let capture = game.lastCapture else { return }
             guard game.lastEnPassant == nil else { return }
 
             // A queen outranks first blood, including when she *is* first blood.
@@ -163,6 +175,7 @@ struct ContentView: View {
             }
         }
         .onChange(of: game.status) { _, newStatus in
+            guard !suppressCutSceneTriggers else { return }
             switch newStatus {
             case .check(let checkedPlayer):
                 record(.check(checkedPlayer))
@@ -175,12 +188,12 @@ struct ContentView: View {
             }
         }
         .onChange(of: game.lastEnPassantOpportunity) { _, opportunity in
-            guard let opportunity else { return }
+            guard !suppressCutSceneTriggers, let opportunity else { return }
             record(.enPassantAvailable(opportunity))
             presentEnPassantOpportunityCutScene(for: opportunity)
         }
         .onChange(of: game.lastEnPassant) { _, capture in
-            guard let capture else { return }
+            guard !suppressCutSceneTriggers, let capture else { return }
             record(.enPassantTaken(capture))
             presentEnPassantCaptureCutScene(for: capture)
         }
@@ -215,6 +228,48 @@ struct ContentView: View {
             title: lastPlies == nil ? "Replay" : "Last \(lastPlies!)",
             in: game
         )
+    }
+
+    private func undo(plies: Int) {
+        suppressCutSceneTriggers = true
+        let undone = game.undo(plies: plies)
+        guard undone > 0 else {
+            suppressCutSceneTriggers = false
+            return
+        }
+
+        cutSceneLog.removeAll { $0.plyIndex >= game.plies.count }
+        isReelPresented = false
+        checkCutScene = nil
+        firstCaptureCutScene = nil
+        queenDownCutScene = nil
+        enPassantOpportunityCutScene = nil
+        enPassantCaptureCutScene = nil
+
+        // SwiftUI delivers the game publications in this update pass; release
+        // suppression only after it has had a chance to observe them.
+        DispatchQueue.main.async {
+            suppressCutSceneTriggers = false
+        }
+    }
+
+    /// Loading a stored game replays dozens of moves in one go. The scenes
+    /// those moves would have fired are suppressed as they stream past, then
+    /// derived from the finished history — so the game arrives with its reel
+    /// intact instead of a burst of cards on load.
+    private func load(_ stored: StoredGame) {
+        replay.stop(in: game)
+        suppressCutSceneTriggers = true
+        checkCutScene = nil
+        firstCaptureCutScene = nil
+        queenDownCutScene = nil
+        enPassantOpportunityCutScene = nil
+        enPassantCaptureCutScene = nil
+
+        game.load(stored)
+
+        cutSceneLog = CutSceneEvent.derived(from: game.plies)
+        suppressCutSceneTriggers = false
     }
 
     private func record(_ kind: CutSceneEvent.Kind) {
@@ -401,6 +456,34 @@ struct ContentView: View {
             }
 
             Menu {
+                Button {
+                    undo(plies: 1)
+                } label: {
+                    Label("Undo last move", systemImage: "arrow.uturn.backward")
+                }
+
+                Button {
+                    undo(plies: 2)
+                } label: {
+                    Label("Undo local turn (2 moves)", systemImage: "arrow.uturn.backward.circle")
+                }
+                .disabled(game.plies.count < 2)
+            } label: {
+                controlIcon("arrow.uturn.backward", tint: .orange)
+            }
+            .disabled(!game.canUndoTurn)
+            .accessibilityLabel("Undo")
+            .accessibilityHint("Choose to undo the last move or the last local turn")
+
+            Menu {
+                Section {
+                    Button {
+                        isGameBrowserPresented = true
+                    } label: {
+                        Label("Browse games…", systemImage: "square.grid.2x2")
+                    }
+                }
+
                 Section("Jump to a position") {
                     ForEach(PositionPreset.allCases) { preset in
                         Button {

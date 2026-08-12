@@ -20,6 +20,51 @@ struct CutSceneEvent: Identifiable, Equatable {
     let plyIndex: Int
 }
 
+extension CutSceneEvent {
+    /// Rebuilds the scenes a game *would* have fired, from its history alone.
+    /// A game loaded from the browser was never played live, so its reel has
+    /// to be derived rather than recorded.
+    ///
+    /// En passant is not derived: the engine reports those moments live, and
+    /// inventing them from a ply list would risk claiming the wrong one.
+    static func derived(from plies: [RecordedPly]) -> [CutSceneEvent] {
+        var events: [CutSceneEvent] = []
+        var hasDrawnBlood = false
+
+        for (index, ply) in plies.enumerated() {
+            let moveNumber = max(1, (index + 2) / 2)
+
+            if let capture = ply.capture {
+                if capture.piece.kind == .queen {
+                    events.append(
+                        CutSceneEvent(kind: .queenDown(capture), moveNumber: moveNumber, plyIndex: index)
+                    )
+                } else if !hasDrawnBlood {
+                    events.append(
+                        CutSceneEvent(kind: .firstBlood(capture), moveNumber: moveNumber, plyIndex: index)
+                    )
+                }
+                hasDrawnBlood = true
+            }
+
+            switch ply.statusAfter {
+            case .check(let player):
+                events.append(
+                    CutSceneEvent(kind: .check(player), moveNumber: moveNumber, plyIndex: index)
+                )
+            case .checkmate(let winner):
+                events.append(
+                    CutSceneEvent(kind: .checkmate(winner: winner), moveNumber: moveNumber, plyIndex: index)
+                )
+            case .playing, .stalemate:
+                break
+            }
+        }
+
+        return events
+    }
+}
+
 /// A single cut scene card. Three layers drift at different rates — the
 /// parallax does the work a camera move would do in an engine. Used both by
 /// the reel and inline in a move replay.

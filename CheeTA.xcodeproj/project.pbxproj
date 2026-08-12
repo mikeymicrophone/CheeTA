@@ -22,6 +22,8 @@
 		100000000000000000000013 /* QueenDownCutSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* QueenDownCutSceneView.swift */; };
 		100000000000000000000014 /* CutSceneReel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000016 /* CutSceneReel.swift */; };
 		100000000000000000000015 /* EnPassantCutSceneViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000017 /* EnPassantCutSceneViews.swift */; };
+		100000000000000000000016 /* GameLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000018 /* GameLibrary.swift */; };
+		100000000000000000000017 /* GameBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* GameBrowserView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -52,6 +54,8 @@
 		200000000000000000000015 /* QueenDownCutSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueenDownCutSceneView.swift; sourceTree = "<group>"; };
 		200000000000000000000016 /* CutSceneReel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CutSceneReel.swift; sourceTree = "<group>"; };
 		200000000000000000000017 /* EnPassantCutSceneViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnPassantCutSceneViews.swift; sourceTree = "<group>"; };
+		200000000000000000000018 /* GameLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameLibrary.swift; sourceTree = "<group>"; };
+		200000000000000000000019 /* GameBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameBrowserView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -98,6 +102,8 @@
 				200000000000000000000015 /* QueenDownCutSceneView.swift */,
 				200000000000000000000016 /* CutSceneReel.swift */,
 				200000000000000000000017 /* EnPassantCutSceneViews.swift */,
+				200000000000000000000019 /* GameBrowserView.swift */,
+				200000000000000000000018 /* GameLibrary.swift */,
 				200000000000000000000005 /* Assets.xcassets */,
 			);
 			path = CheeTA;
@@ -240,6 +246,9 @@
 				100000000000000000000013 /* QueenDownCutSceneView.swift in Sources */,
 				100000000000000000000014 /* CutSceneReel.swift in Sources */,
 				100000000000000000000015 /* EnPassantCutSceneViews.swift in Sources */,
+				100000000000000000000016 /* GameLibrary.swift in Sources */,
+				100000000000000000000017 /* GameBrowserView.swift in Sources */,
+				100000000000000000000016 /* GameLibrary.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -387,6 +396,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = C7FJS9SLNW;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = CheeTA;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.board-games";
@@ -414,6 +424,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = C7FJS9SLNW;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = CheeTA;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.board-games";

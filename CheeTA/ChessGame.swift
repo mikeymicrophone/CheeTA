@@ -39,6 +39,10 @@ final class ChessGame: ObservableObject {
 
     private var openingBoard: [Square: Piece]
     private var openingPlayer: Player
+    private var openingCastlingRights: CastlingRights
+    private var openingEnPassantTarget: Square?
+    private var openingHalfmoveClock: Int
+    private var openingFullmoveNumber: Int
     private var liveState: LiveState?
 
     /// The live game, parked while a replay borrows the published position.
@@ -74,7 +78,11 @@ final class ChessGame: ObservableObject {
         self.plies = []
         self.isReplaying = false
         self.isPulseEnabled = true
-        self.castlingRights = castlingRights ?? (board == ChessGame.startingBoard() ? .standard : .none)
+        // Resolved once into a local: reading it back off self before every
+        // stored property is initialized is not allowed.
+        let resolvedCastlingRights = castlingRights
+            ?? (board == ChessGame.startingBoard() ? .standard : .none)
+        self.castlingRights = resolvedCastlingRights
         self.pendingPromotion = nil
         self.enPassantTarget = nil
         self.lastEnPassantOpportunity = nil
@@ -83,6 +91,10 @@ final class ChessGame: ObservableObject {
         self.fullmoveNumber = 1
         self.openingBoard = board
         self.openingPlayer = currentPlayer
+        self.openingCastlingRights = resolvedCastlingRights
+        self.openingEnPassantTarget = nil
+        self.openingHalfmoveClock = 0
+        self.openingFullmoveNumber = 1
         refreshStatus()
     }
 
@@ -121,6 +133,10 @@ final class ChessGame: ObservableObject {
         fullmoveNumber = 1
         openingBoard = board
         openingPlayer = .white
+        openingCastlingRights = castlingRights
+        openingEnPassantTarget = enPassantTarget
+        openingHalfmoveClock = halfmoveClock
+        openingFullmoveNumber = fullmoveNumber
         plies = []
         selectedSquare = nil
         legalTargets = []
@@ -146,6 +162,10 @@ final class ChessGame: ObservableObject {
         fullmoveNumber = 1
         openingBoard = board
         openingPlayer = currentPlayer
+        openingCastlingRights = castlingRights
+        openingEnPassantTarget = enPassantTarget
+        openingHalfmoveClock = halfmoveClock
+        openingFullmoveNumber = fullmoveNumber
         plies = []
         selectedSquare = nil
         legalTargets = []
@@ -156,6 +176,28 @@ final class ChessGame: ObservableObject {
         candidateSquares = []
         isChoosingCandidates = false
         refreshStatus()
+    }
+
+    /// Replaces the game with a stored one by replaying its moves through the
+    /// ordinary rules, so the loaded game arrives with real history: it can be
+    /// replayed, and its cut scenes can be derived from the plies.
+    func load(_ stored: StoredGame) {
+        reset()
+
+        for move in stored.moves {
+            completeMove(
+                from: move.from,
+                to: move.to,
+                promotion: move.promotion
+            )
+        }
+
+        selectedSquare = nil
+        legalTargets = []
+        candidateSquares = []
+        isChoosingCandidates = false
+        // A stored game is its own thing, not one of the built-in positions.
+        positionPreset = nil
     }
 
     /// A standard six-field Forsyth-Edwards Notation representation of the
@@ -188,6 +230,10 @@ final class ChessGame: ObservableObject {
         pendingPromotion = nil
         openingBoard = board
         openingPlayer = currentPlayer
+        openingCastlingRights = castlingRights
+        openingEnPassantTarget = enPassantTarget
+        openingHalfmoveClock = halfmoveClock
+        openingFullmoveNumber = fullmoveNumber
         plies = []
         selectedSquare = nil
         legalTargets = []
@@ -324,6 +370,90 @@ final class ChessGame: ObservableObject {
 
     func finishChoosingCandidates() {
         isChoosingCandidates = false
+    }
+
+    /// Local play has no automatic opponent yet, so undo is a whole turn by
+    /// default: remove the last pair of plies. If the game has only begun, it
+    /// naturally falls back to its single available ply.
+    var canUndoTurn: Bool {
+        !plies.isEmpty && !isReplaying && pendingPromotion == nil
+    }
+
+    var undoTurnPlyCount: Int {
+        min(2, plies.count)
+    }
+
+    @discardableResult
+    func undoTurn() -> Int {
+        undo(plies: 2)
+    }
+
+    /// Restores an exact earlier rule state. The UI exposes one ply and one
+    /// local turn; keeping this primitive general avoids duplicating a fragile
+    /// reverse-move implementation for each choice.
+    @discardableResult
+    func undo(plies requestedPlyCount: Int) -> Int {
+        guard canUndoTurn else { return 0 }
+
+        let undonePlyCount = min(max(1, requestedPlyCount), plies.count)
+        plies.removeLast(undonePlyCount)
+
+        restoreStateFromHistory()
+
+        lastCapture = plies.reversed().compactMap(\.capture).first
+        captureCount = plies.reduce(into: 0) { count, ply in
+            if ply.capture != nil { count += 1 }
+        }
+        pendingPromotion = nil
+        lastEnPassantOpportunity = nil
+        lastEnPassant = nil
+        selectedSquare = nil
+        legalTargets = []
+        candidateSquares = []
+        isChoosingCandidates = false
+        refreshStatus()
+        return undonePlyCount
+    }
+
+    /// The log stays lean: only a played sequence plus the board after each
+    /// move. The opening position is the baseline, and all reversible rule
+    /// state is deterministically reconstructed from the retained sequence.
+    private func restoreStateFromHistory() {
+        board = openingBoard
+        currentPlayer = openingPlayer
+        castlingRights = openingCastlingRights
+        enPassantTarget = openingEnPassantTarget
+        halfmoveClock = openingHalfmoveClock
+        fullmoveNumber = openingFullmoveNumber
+
+        var boardBefore = openingBoard
+        for ply in plies {
+            guard let movingPiece = boardBefore[ply.move.from] else {
+                assertionFailure("Recorded move has no moving piece")
+                continue
+            }
+
+            revokeCastlingRights(
+                for: movingPiece,
+                from: ply.move.from,
+                to: ply.move.to,
+                captured: ply.capture?.piece
+            )
+            enPassantTarget = movingPiece.kind == .pawn && abs(ply.move.to.rank - ply.move.from.rank) == 2
+                ? ply.move.from.offset(file: 0, rank: movingPiece.player == .white ? 1 : -1)
+                : nil
+            halfmoveClock = movingPiece.kind == .pawn || ply.capture != nil
+                ? 0
+                : halfmoveClock + 1
+            if movingPiece.player == .black {
+                fullmoveNumber += 1
+            }
+
+            board = ply.boardAfter
+            currentPlayer = ply.playerToMoveAfter
+            boardBefore = ply.boardAfter
+        }
+        lastMove = plies.last?.move
     }
 
     // MARK: - Replay
@@ -517,15 +647,17 @@ final class ChessGame: ObservableObject {
         )
         candidateSquares = []
         isChoosingCandidates = false
+        // Status first: the ply records the verdict it produced.
+        refreshStatus()
         plies.append(
             RecordedPly(
                 move: move,
                 capture: capture,
                 boardAfter: board,
-                playerToMoveAfter: currentPlayer
+                playerToMoveAfter: currentPlayer,
+                statusAfter: status
             )
         )
-        refreshStatus()
     }
 
     private func refreshStatus() {

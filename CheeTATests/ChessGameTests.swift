@@ -657,6 +657,49 @@ final class ChessGameTests: XCTestCase {
         XCTAssertEqual(game.fen, before)
     }
 
+    func testUndoLastMoveRebuildsThePriorEnPassantPositionFromSequence() {
+        let game = ChessGame()
+        play("e2", "e4", in: game)
+        play("e7", "e5", in: game)
+
+        XCTAssertEqual(game.undo(plies: 1), 1)
+
+        XCTAssertEqual(
+            game.fen,
+            "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+        )
+        XCTAssertEqual(game.plies.count, 1)
+        XCTAssertEqual(game.lastMove, ChessMove(from: Square("e2")!, to: Square("e4")!))
+    }
+
+    func testUndoTurnRestoresTheOpeningWithoutKeepingPerPlyRuleSnapshots() {
+        let game = ChessGame()
+        let openingFEN = game.fen
+
+        play("e2", "e4", in: game)
+        play("e7", "e5", in: game)
+
+        XCTAssertEqual(game.undoTurn(), 2)
+        XCTAssertEqual(game.fen, openingFEN)
+        XCTAssertTrue(game.plies.isEmpty)
+        XCTAssertNil(game.lastMove)
+        XCTAssertEqual(game.currentPlayer, .white)
+    }
+
+    func testUndoRetainsCastlingHistoryFromTheRemainingSequence() throws {
+        let game = ChessGame()
+        try game.load(fen: "4k3/8/8/8/8/8/8/4K2R w K - 6 9")
+
+        play("h1", "h2", in: game)
+        play("e8", "e7", in: game)
+
+        XCTAssertEqual(game.undo(plies: 1), 1)
+        XCTAssertFalse(game.castlingRights.whiteKingSide)
+        XCTAssertEqual(game.halfmoveClock, 7)
+        XCTAssertEqual(game.fullmoveNumber, 9)
+        XCTAssertEqual(game.currentPlayer, .black)
+    }
+
     /// A replay interleaves per-ply material (cut scenes) with the board
     /// frames, so the frame-to-ply mapping has to stay exact.
     func testReplayFramesLineUpWithPliesFromTheReportedStartIndex() {
@@ -692,6 +735,59 @@ final class ChessGameTests: XCTestCase {
         XCTAssertEqual(game.replayStartIndex(lastPlies: 1), 1)
         XCTAssertEqual(game.replayStartIndex(lastPlies: 0), 2)
         XCTAssertEqual(game.replayStartIndex(lastPlies: -5), 2)
+    }
+
+    func testGeneratedGamesAreDeterministicAndLegal() {
+        let first = GameLibrary.generate(seed: 7)
+        let second = GameLibrary.generate(seed: 7)
+        let other = GameLibrary.generate(seed: 8)
+
+        XCTAssertEqual(first.moves, second.moves, "the same seed must produce the same game")
+        XCTAssertNotEqual(first.moves, other.moves)
+        XCTAssertFalse(first.moves.isEmpty)
+
+        // Both kings survive: random play through the real rules can never
+        // capture a king, because that is not a legal move.
+        let kings = first.finalBoard.values.filter { $0.kind == .king }
+        XCTAssertEqual(kings.count, 2)
+    }
+
+    func testLoadingAStoredGameRestoresItsFullHistory() {
+        let stored = GameLibrary.generate(seed: 3)
+        let game = ChessGame()
+
+        game.load(stored)
+
+        XCTAssertEqual(game.plies.count, stored.moves.count)
+        XCTAssertEqual(game.plies.map(\.move), stored.moves)
+        XCTAssertEqual(game.board, stored.finalBoard)
+        XCTAssertEqual(game.status, stored.result)
+        XCTAssertNil(game.positionPreset)
+
+        // History is real, so the whole game can be replayed from move one.
+        XCTAssertEqual(game.replayFrames().count, stored.moves.count + 1)
+    }
+
+    func testLoadingAStoredGameTwiceDoesNotAccumulateHistory() {
+        let stored = GameLibrary.generate(seed: 4)
+        let game = ChessGame()
+
+        game.load(stored)
+        game.load(stored)
+
+        XCTAssertEqual(game.plies.count, stored.moves.count)
+    }
+
+    func testEveryPlyRecordsTheVerdictItProduced() {
+        let game = ChessGame()
+
+        play("f2", "f3", in: game)
+        play("e7", "e5", in: game)
+        play("g2", "g4", in: game)
+        play("d8", "h4", in: game)
+
+        XCTAssertEqual(game.plies.last?.statusAfter, .checkmate(winner: .black))
+        XCTAssertEqual(game.plies.first?.statusAfter, .playing)
     }
 
     private func makeBoard(_ entries: [(String, PieceKind, Player)]) -> [Square: Piece] {
