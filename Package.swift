@@ -5,6 +5,7 @@ import PackageDescription
 let package = Package(
     name: "CheeTAChessEngine",
     platforms: [
+        .iOS(.v18),
         .macOS(.v14)
     ],
     products: [
@@ -17,7 +18,8 @@ let package = Package(
             exclude: [
                 "Assets.xcassets",
                 "CheeTAApp.swift",
-                "ContentView.swift"
+                "ContentView.swift",
+                "RealityChessBoardView.swift"
             ],
             sources: [
                 "ChessTypes.swift",

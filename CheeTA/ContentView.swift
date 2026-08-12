@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var game = ChessGame()
     @State private var threatDisplayMode: ThreatDisplayMode = .enemyContact
+    @State private var boardDimension: BoardDimension = .threeD
 
     var body: some View {
         GeometryReader { geometry in
@@ -29,10 +30,17 @@ struct ContentView: View {
     }
 
     private var board: some View {
-        ChessBoardView(game: game, threatDisplayMode: threatDisplayMode)
-            .aspectRatio(1, contentMode: .fit)
-            .frame(maxWidth: 720, maxHeight: 720)
-            .shadow(color: .black.opacity(0.2), radius: 18, y: 8)
+        Group {
+            switch boardDimension {
+            case .threeD:
+                RealityChessBoardView(game: game, threatDisplayMode: threatDisplayMode)
+            case .twoD:
+                ChessBoardView(game: game, threatDisplayMode: threatDisplayMode)
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .frame(maxWidth: 720, maxHeight: 720)
+        .shadow(color: .black.opacity(boardDimension == .threeD ? 0.42 : 0.2), radius: 18, y: 8)
     }
 
     private var gamePanel: some View {
@@ -52,6 +60,21 @@ struct ContentView: View {
                     .frame(width: 18, height: 18)
                 Text(game.statusText)
                     .font(.title3.weight(.semibold))
+            }
+
+            Picker("Board dimension", selection: $boardDimension) {
+                ForEach(BoardDimension.allCases) { dimension in
+                    Label(dimension.displayName, systemImage: dimension.systemImage)
+                        .tag(dimension)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityHint("Switches between the 3D and classic board renderers")
+
+            if boardDimension == .threeD {
+                Label("Drag the board to orbit. Tap squares to play.", systemImage: "rotate.3d")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.secondary)
             }
 
             Text("Enemy Contact shows only directional corridors that end on an opposing piece. Border weight still shows stacking.")
@@ -112,6 +135,27 @@ struct ContentView: View {
         UIScreen.main.bounds.height < 700
     }
 
+}
+
+private enum BoardDimension: String, CaseIterable, Identifiable {
+    case threeD
+    case twoD
+
+    var id: Self { self }
+
+    var displayName: String {
+        switch self {
+        case .threeD: "3D"
+        case .twoD: "2D"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .threeD: "cube"
+        case .twoD: "square.grid.3x3"
+        }
+    }
 }
 
 private struct ChessBoardView: View {
