@@ -127,7 +127,7 @@ struct ContentView: View {
             .accessibilityHint("Switches between the 3D and classic board renderers")
 
             if boardDimension == .threeD {
-                Label("Drag the board to orbit. Tap squares to play.", systemImage: "rotate.3d")
+                Label("Drag to orbit or elevate. Pinch to zoom. Tap squares to play.", systemImage: "rotate.3d")
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(.secondary)
             }

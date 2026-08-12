@@ -2,7 +2,7 @@
 
 A basic native iPad chess app built with SwiftUI and RealityKit. It supports local two-player play, legal move validation, captures, check, checkmate, stalemate, restarting a match, and persistent threat corridors.
 
-CheeTA requires iPadOS 18 or newer. The default board is a touch-driven 3D `RealityView` with procedural pieces, tap-to-move play, draggable rotation, and 3D threat markers. A segmented control keeps the classic 2D board available. The procedural renderer is isolated from chess behavior so custom USDZ piece models and board materials can replace it later.
+CheeTA requires iPadOS 18 or newer. The default board is a touch-driven 3D `RealityView` with procedural pieces, tap-to-move play, horizontal orbit, vertical elevation, pinch-to-zoom, and 3D threat markers. A segmented control keeps the classic 2D board available. The procedural renderer is isolated from chess behavior so custom USDZ piece models and board materials can replace it later.
 
 Threat corridors are a passive tactical overlay: every piece continuously projects its attacks and the map updates automatically whenever the board changes. The default Enemy Contact view shows only directional paths whose endpoint is an opposing piece; unrelated directions from the same piece remain hidden. All Threats reveals every projection. A square's border grows thicker as more visible corridors threaten it, and threats from both teams appear as striped borders. The engine representation is separate from the placeholder colors so visual skins can replace the presentation later.
 

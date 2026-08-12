@@ -5,7 +5,7 @@ import UIKit
 struct RealityChessBoardView: View {
     @ObservedObject var game: ChessGame
     let threatDisplayMode: ThreatDisplayMode
-    @State private var orbitState = BoardOrbitState()
+    @State private var cameraState = BoardCameraState()
 
     var body: some View {
         let visibleCorridors = game.threatCorridors(for: threatDisplayMode)
@@ -13,22 +13,19 @@ struct RealityChessBoardView: View {
         RealityView { content in
             let sceneRoot = Entity()
             sceneRoot.name = RealityBoardScene.sceneRootName
-            sceneRoot.orientation = simd_quatf(angle: orbitState.yaw, axis: [0, 1, 0])
             content.add(sceneRoot)
 
             let camera = PerspectiveCamera()
+            camera.name = RealityBoardScene.cameraName
             camera.camera = PerspectiveCameraComponent(
                 near: 0.05,
                 far: 100,
                 fieldOfViewInDegrees: 43
             )
-            camera.look(
-                at: [0, 0.25, 0],
-                from: [0, 8.4, 9.2],
-                relativeTo: nil
-            )
             content.add(camera)
             content.camera = .virtual
+            cameraState.camera = camera
+            cameraState.apply()
 
             RealityBoardScene.rebuild(
                 sceneRoot,
@@ -45,7 +42,10 @@ struct RealityChessBoardView: View {
                 game: game,
                 visibleCorridors: visibleCorridors
             )
-            sceneRoot.orientation = simd_quatf(angle: orbitState.yaw, axis: [0, 1, 0])
+            cameraState.camera = content.entities.first(where: {
+                $0.name == RealityBoardScene.cameraName
+            }) as? PerspectiveCamera
+            cameraState.apply()
         }
         .gesture(
             TapGesture()
@@ -59,21 +59,45 @@ struct RealityChessBoardView: View {
         )
         .simultaneousGesture(
             DragGesture(minimumDistance: 12)
-                .targetedToAnyEntity()
                 .onChanged { value in
-                    guard let sceneRoot = RealityBoardScene.sceneRoot(from: value.entity) else {
-                        return
+                    if !cameraState.isDragging {
+                        cameraState.isDragging = true
+                        cameraState.startYaw = cameraState.yaw
+                        cameraState.startElevation = cameraState.elevation
                     }
-                    if !orbitState.isDragging {
-                        orbitState.isDragging = true
-                        orbitState.startYaw = orbitState.yaw
-                    }
-                    orbitState.yaw = orbitState.startYaw + Float(value.translation.width) * 0.008
-                    sceneRoot.orientation = simd_quatf(angle: orbitState.yaw, axis: [0, 1, 0])
+                    cameraState.yaw = cameraState.startYaw + Float(value.translation.width) * 0.008
+                    cameraState.elevation = cameraState.clampedElevation(
+                        cameraState.startElevation - Float(value.translation.height) * 0.005
+                    )
+                    cameraState.apply()
                 }
                 .onEnded { value in
-                    orbitState.yaw = orbitState.startYaw + Float(value.translation.width) * 0.008
-                    orbitState.isDragging = false
+                    cameraState.yaw = cameraState.startYaw + Float(value.translation.width) * 0.008
+                    cameraState.elevation = cameraState.clampedElevation(
+                        cameraState.startElevation - Float(value.translation.height) * 0.005
+                    )
+                    cameraState.isDragging = false
+                    cameraState.apply()
+                }
+        )
+        .simultaneousGesture(
+            MagnificationGesture()
+                .onChanged { magnification in
+                    if !cameraState.isPinching {
+                        cameraState.isPinching = true
+                        cameraState.startDistance = cameraState.distance
+                    }
+                    cameraState.distance = cameraState.clampedDistance(
+                        cameraState.startDistance / Float(magnification)
+                    )
+                    cameraState.apply()
+                }
+                .onEnded { magnification in
+                    cameraState.distance = cameraState.clampedDistance(
+                        cameraState.startDistance / Float(magnification)
+                    )
+                    cameraState.isPinching = false
+                    cameraState.apply()
                 }
         )
         .background(
@@ -93,15 +117,48 @@ struct RealityChessBoardView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Interactive 3D chess board")
-        .accessibilityHint("Tap a piece and then a highlighted square to move. Drag to orbit the camera.")
+        .accessibilityHint("Tap a piece and then a highlighted square to move. Drag left or right to orbit, drag up or down to elevate, and pinch to zoom.")
     }
 }
 
 @MainActor
-private final class BoardOrbitState {
+private final class BoardCameraState {
+    private let target: SIMD3<Float> = [0, 0.25, 0]
+    private let minimumElevation: Float = .pi / 10
+    private let maximumElevation: Float = .pi * 0.39
+    private let minimumDistance: Float = 8.4
+    private let maximumDistance: Float = 17
+
+    var camera: PerspectiveCamera?
     var yaw: Float = 0
+    var elevation: Float = .pi * 0.23
+    var distance: Float = 12.4
     var startYaw: Float = 0
+    var startElevation: Float = .pi * 0.23
+    var startDistance: Float = 12.4
     var isDragging = false
+    var isPinching = false
+
+    func clampedElevation(_ value: Float) -> Float {
+        min(max(value, minimumElevation), maximumElevation)
+    }
+
+    func clampedDistance(_ value: Float) -> Float {
+        min(max(value, minimumDistance), maximumDistance)
+    }
+
+    func apply() {
+        guard let camera else { return }
+
+        let horizontalDistance = cos(elevation) * distance
+        let verticalDistance = sin(elevation) * distance
+        let position: SIMD3<Float> = [
+            sin(yaw) * horizontalDistance,
+            target.y + verticalDistance,
+            cos(yaw) * horizontalDistance
+        ]
+        camera.look(at: target, from: position, relativeTo: nil)
+    }
 }
 
 /// The only layer that knows how the 3D board looks. Future USDZ character
@@ -109,6 +166,7 @@ private final class BoardOrbitState {
 @MainActor
 private enum RealityBoardScene {
     static let sceneRootName = "cheeta-board-scene"
+    static let cameraName = "cheeta-board-camera"
 
     private static let squareSize: Float = 1
     private static let tileHeight: Float = 0.12
@@ -192,17 +250,6 @@ private enum RealityBoardScene {
             if current.name.hasPrefix("square-"),
                let square = Square(String(current.name.dropFirst("square-".count))) {
                 return square
-            }
-            candidate = current.parent
-        }
-        return nil
-    }
-
-    static func sceneRoot(from entity: Entity) -> Entity? {
-        var candidate: Entity? = entity
-        while let current = candidate {
-            if current.name == sceneRootName {
-                return current
             }
             candidate = current.parent
         }
