@@ -25,6 +25,88 @@ final class ChessGameTests: XCTestCase {
         XCTAssertEqual(moves, Set([Square("f3")!, Square("h3")!]))
     }
 
+    func testBlackMovablePiecesPulseAutomaticallyOnBlackTurn() {
+        let game = ChessGame()
+
+        play("e2", "e4", in: game)
+
+        XCTAssertEqual(game.currentPlayer, .black)
+        XCTAssertEqual(
+            game.candidatePulseSquares,
+            Set(["a7", "b7", "c7", "d7", "e7", "f7", "g7", "h7", "b8", "g8"].map { Square($0)! })
+        )
+    }
+
+    func testWhiteMovablePiecesPulseAutomaticallyOnWhiteTurn() {
+        let game = ChessGame()
+
+        XCTAssertEqual(game.currentPlayer, .white)
+        XCTAssertEqual(
+            game.candidatePulseSquares,
+            Set(["a2", "b2", "c2", "d2", "e2", "f2", "g2", "h2", "b1", "g1"].map { Square($0)! })
+        )
+    }
+
+    func testTappingWhitePiecesBuildsACandidatePulseSubset() {
+        let game = ChessGame()
+        game.beginChoosingCandidates()
+
+        game.tap(Square("b1")!)
+        game.tap(Square("g1")!)
+
+        XCTAssertEqual(game.candidateSquares, Set([Square("b1")!, Square("g1")!]))
+        XCTAssertEqual(game.candidatePulseSquares, game.candidateSquares)
+    }
+
+    func testTappingBlackPiecesBuildsACandidatePulseSubset() {
+        let game = ChessGame()
+        play("e2", "e4", in: game)
+        game.beginChoosingCandidates()
+
+        game.tap(Square("b8")!)
+        game.tap(Square("g8")!)
+
+        XCTAssertEqual(game.candidateSquares, Set([Square("b8")!, Square("g8")!]))
+        XCTAssertEqual(game.candidatePulseSquares, game.candidateSquares)
+
+        game.clearCandidates()
+
+        XCTAssertEqual(game.candidatePulseSquares, game.movableSquares(for: .black))
+    }
+
+    func testOrdinaryPieceSelectionDoesNotNarrowAutomaticCandidates() {
+        let game = ChessGame()
+        let allMovableWhitePieces = game.movableSquares(for: .white)
+
+        game.tap(Square("e2")!)
+
+        XCTAssertTrue(game.candidateSquares.isEmpty)
+        XCTAssertEqual(game.candidatePulseSquares, allMovableWhitePieces)
+    }
+
+    func testFinishingCandidateChoiceKeepsTheChosenPulseSubset() {
+        let game = ChessGame()
+        game.beginChoosingCandidates()
+        game.tap(Square("b1")!)
+        game.tap(Square("g1")!)
+
+        game.finishChoosingCandidates()
+
+        XCTAssertFalse(game.isChoosingCandidates)
+        XCTAssertEqual(game.candidatePulseSquares, Set([Square("b1")!, Square("g1")!]))
+    }
+
+    func testCandidateSelectionClearsAndPassesToTheNextPlayerAfterAMove() {
+        let game = ChessGame()
+        play("e2", "e4", in: game)
+
+        play("b8", "c6", in: game)
+
+        XCTAssertEqual(game.currentPlayer, .white)
+        XCTAssertTrue(game.candidateSquares.isEmpty)
+        XCTAssertEqual(game.candidatePulseSquares, game.movableSquares(for: .white))
+    }
+
     func testPinnedPieceCannotExposeItsKing() {
         let board = makeBoard([
             ("e1", .king, .white),

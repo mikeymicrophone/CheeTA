@@ -62,6 +62,23 @@ struct ContentView: View {
                     .font(.title3.weight(.semibold))
             }
 
+            if !game.status.isFinished {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label("Candidates", systemImage: "sparkles")
+                            .font(.headline)
+                        Spacer()
+                        candidateActions
+                    }
+
+                    Text(candidateGuidance)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(12)
+                .background(Color.orange.opacity(0.11), in: RoundedRectangle(cornerRadius: 14))
+            }
+
             Picker("Board dimension", selection: $boardDimension) {
                 ForEach(BoardDimension.allCases) { dimension in
                     Label(dimension.displayName, systemImage: dimension.systemImage)
@@ -135,6 +152,41 @@ struct ContentView: View {
         UIScreen.main.bounds.height < 700
     }
 
+    private var candidateGuidance: String {
+        if game.isChoosingCandidates {
+            if game.candidateSquares.isEmpty {
+                return "Candidate picking is on. Tap the pieces you want to keep pulsing."
+            }
+            let noun = game.candidateSquares.count == 1 ? "piece" : "pieces"
+            return "Choosing candidates: \(game.candidateSquares.count) \(noun) will pulse."
+        }
+        if game.candidateSquares.isEmpty {
+            return "All \(game.candidatePulseSquares.count) \(game.currentPlayer.displayName.lowercased()) pieces with a legal move are pulsing."
+        }
+        let noun = game.candidateSquares.count == 1 ? "piece" : "pieces"
+        return "\(game.candidateSquares.count) candidate \(noun) selected."
+    }
+
+    @ViewBuilder
+    private var candidateActions: some View {
+        if game.isChoosingCandidates {
+            Button("Done") {
+                game.finishChoosingCandidates()
+            }
+            .font(.subheadline.weight(.semibold))
+        } else if game.candidateSquares.isEmpty {
+            Button("Choose") {
+                game.beginChoosingCandidates()
+            }
+            .font(.subheadline.weight(.semibold))
+        } else {
+            Button("Pulse all") {
+                game.clearCandidates()
+            }
+            .font(.subheadline.weight(.semibold))
+        }
+    }
+
 }
 
 private enum BoardDimension: String, CaseIterable, Identifiable {
@@ -177,6 +229,7 @@ private struct ChessBoardView: View {
                             isLegalTarget: game.legalTargets.contains(square),
                             isLastMove: game.lastMove?.from == square || game.lastMove?.to == square,
                             isCheckedKing: game.isKingInCheck(at: square),
+                            isCandidate: game.candidatePulseSquares.contains(square),
                             threatCorridors: visibleCorridors.filter {
                                 $0.threatenedSquares.contains(square)
                             }
@@ -204,6 +257,7 @@ private struct ChessSquareView: View {
     let isLegalTarget: Bool
     let isLastMove: Bool
     let isCheckedKing: Bool
+    let isCandidate: Bool
     let threatCorridors: [ThreatCorridor]
     let action: () -> Void
 
@@ -231,6 +285,10 @@ private struct ChessSquareView: View {
                 if isSelected {
                     Rectangle()
                         .strokeBorder(Color.yellow, lineWidth: 4)
+                }
+
+                if isCandidate {
+                    CandidatePulse2D()
                 }
 
                 if let piece {
@@ -274,13 +332,34 @@ private struct ChessSquareView: View {
         } else {
             contents = "\(square.algebraic), empty"
         }
-        guard !threatCorridors.isEmpty else { return contents }
+        let candidateDescription = isCandidate ? ", candidate" : ""
+        guard !threatCorridors.isEmpty else { return contents + candidateDescription }
         let suffix = threatCorridors.count == 1 ? "piece" : "pieces"
-        return "\(contents), threatened by \(threatCorridors.count) \(suffix)"
+        return "\(contents)\(candidateDescription), threatened by \(threatCorridors.count) \(suffix)"
     }
 
     private var accessibilityHint: String {
         return isLegalTarget ? "Moves the selected piece here" : "Selects this square"
+    }
+}
+
+private struct CandidatePulse2D: View {
+    var body: some View {
+        PhaseAnimator([false, true]) { expanded in
+            ZStack {
+                Circle()
+                    .fill(Color.orange.opacity(0.78))
+                Circle()
+                    .stroke(Color.yellow.opacity(0.95), lineWidth: 3)
+            }
+            .scaleEffect(expanded ? 0.98 : 0.58)
+            .opacity(expanded ? 0.42 : 0.94)
+            .padding(4)
+        } animation: { _ in
+            .easeInOut(duration: 0.82)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 

@@ -6,6 +6,8 @@ CheeTA requires iPadOS 18 or newer. The default board is a touch-driven 3D `Real
 
 Threat corridors are a passive tactical overlay: every piece continuously projects its attacks and the map updates automatically whenever the board changes. The default Enemy Contact view shows only directional paths whose endpoint is an opposing piece; unrelated directions from the same piece remain hidden. All Threats reveals every projection. A square's border grows thicker as more visible corridors threaten it, and threats from both teams appear as striped borders. The engine representation is separate from the placeholder colors so visual skins can replace the presentation later.
 
+On every turn, each piece belonging to the current player with at least one legal move receives a pulsing candidate marker. The Candidates panel can enter a dedicated picking mode where tapping movable pieces builds a smaller candidate set; ordinary move-selection taps never narrow the automatic set. Pulse All restores every movable piece. Candidate choices reset after a move, restart, or position change.
+
 The Opening, Midgame, and Endgame buttons load curated, playable positions for quick scenario exploration. Loading a scenario clears transient move highlights and immediately rebuilds the passive threat map.
 
 This first version intentionally omits castling, en passant, and promotion.

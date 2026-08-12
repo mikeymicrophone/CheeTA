@@ -10,6 +10,8 @@ final class ChessGame: ObservableObject {
     @Published private(set) var lastMove: ChessMove?
     @Published private(set) var status: PositionStatus
     @Published private(set) var positionPreset: PositionPreset?
+    @Published private(set) var candidateSquares: Set<Square>
+    @Published private(set) var isChoosingCandidates: Bool
 
     init(
         board: [Square: Piece] = ChessGame.startingBoard(),
@@ -22,6 +24,8 @@ final class ChessGame: ObservableObject {
         self.lastMove = nil
         self.status = .playing
         self.positionPreset = nil
+        self.candidateSquares = []
+        self.isChoosingCandidates = false
         refreshStatus()
     }
 
@@ -38,6 +42,15 @@ final class ChessGame: ObservableObject {
         }
     }
 
+    /// The current player's movable pieces pulse until the player taps one.
+    /// Once a manual set exists, only those chosen candidates pulse.
+    var candidatePulseSquares: Set<Square> {
+        guard !status.isFinished else { return [] }
+        let movable = movableSquares(for: currentPlayer)
+        let chosen = candidateSquares.intersection(movable)
+        return chosen.isEmpty ? movable : chosen
+    }
+
     func reset() {
         board = Self.startingBoard()
         currentPlayer = .white
@@ -45,6 +58,8 @@ final class ChessGame: ObservableObject {
         legalTargets = []
         lastMove = nil
         positionPreset = nil
+        candidateSquares = []
+        isChoosingCandidates = false
         refreshStatus()
     }
 
@@ -55,6 +70,8 @@ final class ChessGame: ObservableObject {
         legalTargets = []
         lastMove = nil
         positionPreset = preset
+        candidateSquares = []
+        isChoosingCandidates = false
         refreshStatus()
     }
 
@@ -102,6 +119,9 @@ final class ChessGame: ObservableObject {
         }
 
         if board[square]?.player == currentPlayer {
+            if isChoosingCandidates, !legalMoves(from: square).isEmpty {
+                toggleCandidate(square)
+            }
             selectedSquare = square
             legalTargets = Set(legalMoves(from: square))
         } else {
@@ -136,6 +156,38 @@ final class ChessGame: ObservableObject {
         Self.isInCheck(player, on: board)
     }
 
+    func movableSquares(for player: Player) -> Set<Square> {
+        Set(board.compactMap { square, piece in
+            guard piece.player == player,
+                  !Self.legalMoves(from: square, on: board).isEmpty else {
+                return nil
+            }
+            return square
+        })
+    }
+
+    func clearCandidates() {
+        candidateSquares = []
+        isChoosingCandidates = false
+    }
+
+    func beginChoosingCandidates() {
+        candidateSquares = []
+        isChoosingCandidates = true
+    }
+
+    func finishChoosingCandidates() {
+        isChoosingCandidates = false
+    }
+
+    private func toggleCandidate(_ square: Square) {
+        if candidateSquares.contains(square) {
+            candidateSquares.remove(square)
+        } else {
+            candidateSquares.insert(square)
+        }
+    }
+
     private func makeMove(from origin: Square, to destination: Square) {
         guard let movingPiece = board[origin], movingPiece.player == currentPlayer else { return }
 
@@ -145,6 +197,8 @@ final class ChessGame: ObservableObject {
         selectedSquare = nil
         legalTargets = []
         currentPlayer = currentPlayer.opponent
+        candidateSquares = []
+        isChoosingCandidates = false
         refreshStatus()
     }
 

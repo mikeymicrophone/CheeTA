@@ -139,6 +139,12 @@ private enum RealityBoardScene {
                     root.addChild(marker)
                 }
 
+                if game.candidatePulseSquares.contains(square) {
+                    let marker = makeCandidatePulseMarker()
+                    marker.position = position + [0, tileHeight / 2 + 0.025, 0]
+                    root.addChild(marker)
+                }
+
                 if game.lastMove?.from == square || game.lastMove?.to == square {
                     let marker = makeFlatMarker(color: UIColor.systemYellow.withAlphaComponent(0.36))
                     marker.position = position + [0, tileHeight / 2 + 0.012, 0]
@@ -352,6 +358,66 @@ private enum RealityBoardScene {
             color: whiteCount > 0 ? .systemCyan : .systemPurple,
             thickness: thickness
         )
+    }
+
+    private static func makeCandidatePulseMarker() -> Entity {
+        let root = Entity()
+        let disc = model(
+            .generateCylinder(height: 0.032, radius: 0.48),
+            color: .systemOrange,
+            metallic: true,
+            roughness: 0.18
+        )
+        disc.components.set(OpacityComponent(opacity: 0.55))
+        disc.transform = Transform(scale: [0.82, 1, 0.82])
+        root.addChild(disc)
+
+        do {
+            let grow = try AnimationResource.generate(
+                with: FromToByAnimation<Transform>(
+                    from: Transform(scale: [0.82, 1, 0.82]),
+                    to: Transform(scale: [1.04, 1, 1.04]),
+                    duration: 0.72,
+                    timing: .easeInOut,
+                    bindTarget: .transform
+                )
+            )
+            let shrink = try AnimationResource.generate(
+                with: FromToByAnimation<Transform>(
+                    from: Transform(scale: [1.04, 1, 1.04]),
+                    to: Transform(scale: [0.82, 1, 0.82]),
+                    duration: 0.72,
+                    timing: .easeInOut,
+                    bindTarget: .transform
+                )
+            )
+            let brighten = try AnimationResource.generate(
+                with: FromToByAnimation<Float>(
+                    from: 0.48,
+                    to: 1.0,
+                    duration: 0.72,
+                    timing: .easeInOut,
+                    bindTarget: .opacity
+                )
+            )
+            let dim = try AnimationResource.generate(
+                with: FromToByAnimation<Float>(
+                    from: 1.0,
+                    to: 0.48,
+                    duration: 0.72,
+                    timing: .easeInOut,
+                    bindTarget: .opacity
+                )
+            )
+            let scalePulse = try AnimationResource.sequence(with: [grow, shrink])
+            let opacityPulse = try AnimationResource.sequence(with: [brighten, dim])
+            let pulse = try AnimationResource.group(with: [scalePulse, opacityPulse])
+            disc.playAnimation(pulse.repeat())
+        } catch {
+            // A static marker still communicates candidacy if animation setup fails.
+        }
+
+        return root
     }
 
     private static func makeStripedFrame(thickness: Float) -> Entity {
