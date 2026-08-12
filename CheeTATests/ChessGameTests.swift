@@ -574,6 +574,126 @@ final class ChessGameTests: XCTestCase {
         XCTAssertEqual(game.lastCapture?.captor, Piece(kind: .pawn, player: .white))
     }
 
+    func testEnPassantIsOfferedForExactlyTheReplyAfterATwoSquarePawnMove() {
+        let game = ChessGame()
+
+        play("e2", "e4", in: game)
+        play("a7", "a6", in: game)
+        play("e4", "e5", in: game)
+        play("d7", "d5", in: game)
+
+        XCTAssertEqual(game.enPassantTarget, Square("d6")!)
+        XCTAssertEqual(
+            game.lastEnPassantOpportunity,
+            EnPassantOpportunity(
+                target: Square("d6")!,
+                vulnerablePawn: Square("d5")!,
+                capturingPawns: [Square("e5")!],
+                player: .white
+            )
+        )
+        XCTAssertTrue(game.legalMoves(from: Square("e5")!).contains(Square("d6")!))
+
+        // Declining the option ends it; it cannot be taken a move later.
+        play("g1", "f3", in: game)
+        play("a6", "a5", in: game)
+
+        XCTAssertNil(game.enPassantTarget)
+        XCTAssertFalse(game.legalMoves(from: Square("e5")!).contains(Square("d6")!))
+    }
+
+    func testEnPassantRemovesThePawnBesideTheLandingSquareAndRecordsIt() throws {
+        let game = ChessGame()
+        try game.load(fen: "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1")
+
+        XCTAssertTrue(game.legalMoves(from: Square("e5")!).contains(Square("d6")!))
+
+        play("e5", "d6", in: game)
+
+        XCTAssertEqual(game.piece(at: Square("d6")!), Piece(kind: .pawn, player: .white))
+        XCTAssertNil(game.piece(at: Square("d5")!))
+        XCTAssertEqual(game.lastCapture?.square, Square("d5")!)
+        XCTAssertEqual(game.lastCapture?.piece, Piece(kind: .pawn, player: .black))
+        XCTAssertEqual(game.lastEnPassant?.capturedPawn, Square("d5")!)
+        XCTAssertTrue(game.plies.last?.move.isEnPassant == true)
+        XCTAssertEqual(game.captureCount, 1)
+    }
+
+    func testPinnedPawnCannotUseEnPassantToExposeItsKing() throws {
+        let game = ChessGame()
+        try game.load(fen: "4r1k1/8/8/3pP3/8/8/8/4K3 w - d6 0 1")
+
+        XCTAssertFalse(game.legalMoves(from: Square("e5")!).contains(Square("d6")!))
+    }
+
+    func testStartingPositionExportsStandardFEN() {
+        XCTAssertEqual(
+            ChessGame().fen,
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
+    }
+
+    func testFENLoadPreservesAllSixFieldsAndRoundTrips() throws {
+        let fen = "r3k2r/8/8/8/8/8/8/R3K2R b KQkq e3 17 42"
+        let game = ChessGame()
+
+        try game.load(fen: fen)
+
+        XCTAssertEqual(game.currentPlayer, .black)
+        XCTAssertEqual(game.piece(at: Square("a1")!), Piece(kind: .rook, player: .white))
+        XCTAssertEqual(game.piece(at: Square("h8")!), Piece(kind: .rook, player: .black))
+        XCTAssertEqual(game.enPassantTarget, Square("e3")!)
+        XCTAssertEqual(game.halfmoveClock, 17)
+        XCTAssertEqual(game.fullmoveNumber, 42)
+        XCTAssertEqual(game.fen, fen)
+    }
+
+    func testInvalidFENLeavesTheCurrentGameAlone() {
+        let game = ChessGame()
+        let before = game.fen
+
+        XCTAssertThrowsError(try game.load(fen: "not a fen"))
+
+        XCTAssertEqual(game.fen, before)
+    }
+
+    /// A replay interleaves per-ply material (cut scenes) with the board
+    /// frames, so the frame-to-ply mapping has to stay exact.
+    func testReplayFramesLineUpWithPliesFromTheReportedStartIndex() {
+        let game = ChessGame()
+        play("e2", "e4", in: game)
+        play("d7", "d5", in: game)
+        play("e4", "d5", in: game)
+
+        for limit in [nil, 1, 2, 10] as [Int?] {
+            let start = game.replayStartIndex(lastPlies: limit)
+            let frames = game.replayFrames(lastPlies: limit)
+
+            XCTAssertEqual(frames.count, game.plies.count - start + 1)
+
+            // frames.dropFirst()[offset] must be the position after ply
+            // start + offset — that is what pins a cut scene to its move.
+            for (offset, frame) in frames.dropFirst().enumerated() {
+                let ply = game.plies[start + offset]
+                XCTAssertEqual(frame.board, ply.boardAfter)
+                XCTAssertEqual(frame.move, ply.move)
+                XCTAssertEqual(frame.playerToMove, ply.playerToMoveAfter)
+            }
+        }
+    }
+
+    func testReplayStartIndexClampsToTheAvailableHistory() {
+        let game = ChessGame()
+        play("e2", "e4", in: game)
+        play("d7", "d5", in: game)
+
+        XCTAssertEqual(game.replayStartIndex(lastPlies: nil), 0)
+        XCTAssertEqual(game.replayStartIndex(lastPlies: 99), 0)
+        XCTAssertEqual(game.replayStartIndex(lastPlies: 1), 1)
+        XCTAssertEqual(game.replayStartIndex(lastPlies: 0), 2)
+        XCTAssertEqual(game.replayStartIndex(lastPlies: -5), 2)
+    }
+
     private func makeBoard(_ entries: [(String, PieceKind, Player)]) -> [Square: Piece] {
         Dictionary(uniqueKeysWithValues: entries.map { notation, kind, player in
             (Square(notation)!, Piece(kind: kind, player: player))

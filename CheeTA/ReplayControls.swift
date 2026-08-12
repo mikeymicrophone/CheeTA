@@ -2,9 +2,18 @@ import SwiftUI
 
 /// Drives replay playback. The engine owns the frames and the parked live
 /// game; this only decides when the next frame is shown.
+/// One beat of a replay: either a position to show on the board, or a cut
+/// scene card to cut away to before play resumes.
+enum ReplayStep {
+    case position(ReplayFrame)
+    case cutScene(CutSceneEvent)
+}
+
 @MainActor
 final class ReplayPlayer: ObservableObject {
     @Published private(set) var progress: Progress?
+    /// Non-nil while the replay has cut away to a scene it recorded live.
+    @Published private(set) var activeCutScene: CutSceneEvent?
 
     struct Progress: Equatable {
         let step: Int
@@ -17,32 +26,49 @@ final class ReplayPlayer: ObservableObject {
     var isPlaying: Bool { progress != nil }
 
     func play(
-        _ frames: [ReplayFrame],
+        _ steps: [ReplayStep],
         title: String,
         in game: ChessGame,
-        secondsPerFrame: Double = 0.55
+        secondsPerFrame: Double = 0.55,
+        secondsPerCutScene: Double = 2.2
     ) {
-        guard frames.count > 1 else { return }
+        let positionCount = steps.reduce(into: 0) { count, step in
+            if case .position = step { count += 1 }
+        }
+        guard positionCount > 1 else { return }
 
         stop(in: game)
         game.beginReplay()
 
         task = Task { [weak self, weak game] in
             guard let game else { return }
+            var shown = 0
 
-            for (index, frame) in frames.enumerated() {
+            for step in steps {
                 guard !Task.isCancelled else { return }
 
-                game.show(frame)
-                self?.progress = Progress(
-                    step: index,
-                    total: frames.count - 1,
-                    title: title
-                )
+                switch step {
+                case .position(let frame):
+                    self?.activeCutScene = nil
+                    game.show(frame)
+                    self?.progress = Progress(
+                        step: shown,
+                        total: positionCount - 1,
+                        title: title
+                    )
+                    shown += 1
 
-                // The opening frame is a still, so only the moves are paced.
-                if index < frames.count - 1 {
-                    try? await Task.sleep(for: .seconds(secondsPerFrame))
+                    // The opening frame is a still, so only the moves are paced.
+                    if shown < positionCount {
+                        try? await Task.sleep(for: .seconds(secondsPerFrame))
+                    }
+
+                case .cutScene(let event):
+                    // The board is already showing the position the scene
+                    // fired on, so the card cuts in over the right moment.
+                    self?.activeCutScene = event
+                    try? await Task.sleep(for: .seconds(secondsPerCutScene))
+                    self?.activeCutScene = nil
                 }
             }
 
@@ -61,6 +87,7 @@ final class ReplayPlayer: ObservableObject {
 
     private func finish(in game: ChessGame) {
         progress = nil
+        activeCutScene = nil
         game.endReplay()
     }
 }

@@ -25,6 +25,17 @@ final class ChessGame: ObservableObject {
     @Published private(set) var castlingRights: CastlingRights
     /// Non-nil between selecting a pawn's final-rank move and choosing its role.
     @Published private(set) var pendingPromotion: PendingPromotion?
+    /// The empty square behind a pawn that has just moved two squares.
+    @Published private(set) var enPassantTarget: Square?
+    /// Fires only when a played move creates a genuine, legal en-passant
+    /// response. Loading a FEN can still make the move available, but does not
+    /// pretend that the moment happened in this game.
+    @Published private(set) var lastEnPassantOpportunity: EnPassantOpportunity?
+    /// The latest en-passant capture, retained long enough for the UI to stage
+    /// its aftermath cut scene.
+    @Published private(set) var lastEnPassant: EnPassantCapture?
+    @Published private(set) var halfmoveClock: Int
+    @Published private(set) var fullmoveNumber: Int
 
     private var openingBoard: [Square: Piece]
     private var openingPlayer: Player
@@ -39,6 +50,9 @@ final class ChessGame: ObservableObject {
         let legalTargets: Set<Square>
         let candidateSquares: Set<Square>
         let castlingRights: CastlingRights
+        let enPassantTarget: Square?
+        let halfmoveClock: Int
+        let fullmoveNumber: Int
     }
 
     init(
@@ -62,6 +76,11 @@ final class ChessGame: ObservableObject {
         self.isPulseEnabled = true
         self.castlingRights = castlingRights ?? (board == ChessGame.startingBoard() ? .standard : .none)
         self.pendingPromotion = nil
+        self.enPassantTarget = nil
+        self.lastEnPassantOpportunity = nil
+        self.lastEnPassant = nil
+        self.halfmoveClock = 0
+        self.fullmoveNumber = 1
         self.openingBoard = board
         self.openingPlayer = currentPlayer
         refreshStatus()
@@ -95,6 +114,11 @@ final class ChessGame: ObservableObject {
         currentPlayer = .white
         castlingRights = .standard
         pendingPromotion = nil
+        enPassantTarget = nil
+        lastEnPassantOpportunity = nil
+        lastEnPassant = nil
+        halfmoveClock = 0
+        fullmoveNumber = 1
         openingBoard = board
         openingPlayer = .white
         plies = []
@@ -115,6 +139,11 @@ final class ChessGame: ObservableObject {
         currentPlayer = Self.currentPlayer(for: preset)
         castlingRights = Self.castlingRights(for: preset)
         pendingPromotion = nil
+        enPassantTarget = nil
+        lastEnPassantOpportunity = nil
+        lastEnPassant = nil
+        halfmoveClock = 0
+        fullmoveNumber = 1
         openingBoard = board
         openingPlayer = currentPlayer
         plies = []
@@ -124,6 +153,48 @@ final class ChessGame: ObservableObject {
         lastCapture = nil
         captureCount = 0
         positionPreset = preset
+        candidateSquares = []
+        isChoosingCandidates = false
+        refreshStatus()
+    }
+
+    /// A standard six-field Forsyth-Edwards Notation representation of the
+    /// exact position currently on the board.
+    var fen: String {
+        Self.makeFEN(
+            board: board,
+            currentPlayer: currentPlayer,
+            castlingRights: castlingRights,
+            enPassantTarget: enPassantTarget,
+            halfmoveClock: halfmoveClock,
+            fullmoveNumber: fullmoveNumber
+        )
+    }
+
+    /// Replaces the game with a FEN position. Imported positions deliberately
+    /// start a fresh replay history: FEN carries a position, not its moves.
+    func load(fen notation: String) throws {
+        let position = try Self.parseFEN(notation)
+
+        endReplay()
+        board = position.board
+        currentPlayer = position.currentPlayer
+        castlingRights = position.castlingRights
+        enPassantTarget = position.enPassantTarget
+        lastEnPassantOpportunity = nil
+        lastEnPassant = nil
+        halfmoveClock = position.halfmoveClock
+        fullmoveNumber = position.fullmoveNumber
+        pendingPromotion = nil
+        openingBoard = board
+        openingPlayer = currentPlayer
+        plies = []
+        selectedSquare = nil
+        legalTargets = []
+        lastMove = nil
+        lastCapture = nil
+        captureCount = 0
+        positionPreset = nil
         candidateSquares = []
         isChoosingCandidates = false
         refreshStatus()
@@ -203,7 +274,12 @@ final class ChessGame: ObservableObject {
     }
 
     func legalMoves(from origin: Square) -> [Square] {
-        Self.legalMoves(from: origin, on: board, castlingRights: castlingRights)
+        Self.legalMoves(
+            from: origin,
+            on: board,
+            castlingRights: castlingRights,
+            enPassantTarget: enPassantTarget
+        )
     }
 
     func isInCheck(_ player: Player) -> Bool {
@@ -213,7 +289,12 @@ final class ChessGame: ObservableObject {
     func movableSquares(for player: Player) -> Set<Square> {
         Set(board.compactMap { square, piece in
             guard piece.player == player,
-                  !Self.legalMoves(from: square, on: board, castlingRights: castlingRights).isEmpty else {
+                  !Self.legalMoves(
+                    from: square,
+                    on: board,
+                    castlingRights: castlingRights,
+                    enPassantTarget: enPassantTarget
+                  ).isEmpty else {
                 return nil
             }
             return square
@@ -249,10 +330,16 @@ final class ChessGame: ObservableObject {
 
     /// Frames for playing the game back: the position before the first ply
     /// shown, then one frame per ply. `lastPlies` nil replays everything.
+    /// The ply a replay of this length begins at, so callers can line other
+    /// per-ply material up with `replayFrames(lastPlies:)`.
+    func replayStartIndex(lastPlies limit: Int? = nil) -> Int {
+        limit.map { max(0, plies.count - max(0, $0)) } ?? 0
+    }
+
     func replayFrames(lastPlies limit: Int? = nil) -> [ReplayFrame] {
         guard !plies.isEmpty else { return [] }
 
-        let start = limit.map { max(0, plies.count - max(0, $0)) } ?? 0
+        let start = replayStartIndex(lastPlies: limit)
         let opening: ReplayFrame
         if start == 0 {
             opening = ReplayFrame(
@@ -290,7 +377,10 @@ final class ChessGame: ObservableObject {
             selectedSquare: selectedSquare,
             legalTargets: legalTargets,
             candidateSquares: candidateSquares,
-            castlingRights: castlingRights
+            castlingRights: castlingRights,
+            enPassantTarget: enPassantTarget,
+            halfmoveClock: halfmoveClock,
+            fullmoveNumber: fullmoveNumber
         )
         selectedSquare = nil
         legalTargets = []
@@ -316,6 +406,9 @@ final class ChessGame: ObservableObject {
         legalTargets = liveState.legalTargets
         candidateSquares = liveState.candidateSquares
         castlingRights = liveState.castlingRights
+        enPassantTarget = liveState.enPassantTarget
+        halfmoveClock = liveState.halfmoveClock
+        fullmoveNumber = liveState.fullmoveNumber
         self.liveState = nil
         isReplaying = false
     }
@@ -355,13 +448,29 @@ final class ChessGame: ObservableObject {
     private func completeMove(from origin: Square, to destination: Square, promotion: PieceKind?) {
         guard let movingPiece = board[origin], movingPiece.player == currentPlayer else { return }
 
+        let enPassant = Self.enPassantCapture(
+            from: origin,
+            to: destination,
+            piece: movingPiece,
+            on: board,
+            target: enPassantTarget
+        )
         var capture: Capture?
-        if let takenPiece = board[destination] {
+        if let enPassant,
+           let takenPiece = board[enPassant.capturedPawn] {
+            capture = Capture(
+                piece: takenPiece,
+                captor: movingPiece,
+                square: enPassant.capturedPawn
+            )
+        } else if let takenPiece = board[destination] {
             capture = Capture(
                 piece: takenPiece,
                 captor: movingPiece,
                 square: destination
             )
+        }
+        if capture != nil {
             lastCapture = capture
             captureCount += 1
         }
@@ -371,7 +480,8 @@ final class ChessGame: ObservableObject {
             from: origin,
             to: destination,
             piece: resultingPiece,
-            on: board
+            on: board,
+            enPassantTarget: enPassantTarget
         )
         revokeCastlingRights(
             for: movingPiece,
@@ -380,12 +490,31 @@ final class ChessGame: ObservableObject {
             captured: capture?.piece
         )
 
-        let move = ChessMove(from: origin, to: destination, promotion: promotion)
+        let move = ChessMove(
+            from: origin,
+            to: destination,
+            promotion: promotion,
+            isEnPassant: enPassant != nil
+        )
         lastMove = move
+        lastEnPassant = enPassant
         selectedSquare = nil
         legalTargets = []
         pendingPromotion = nil
+        enPassantTarget = movingPiece.kind == .pawn && abs(destination.rank - origin.rank) == 2
+            ? origin.offset(file: 0, rank: movingPiece.player == .white ? 1 : -1)
+            : nil
+        halfmoveClock = movingPiece.kind == .pawn || capture != nil ? 0 : halfmoveClock + 1
+        if movingPiece.player == .black {
+            fullmoveNumber += 1
+        }
         currentPlayer = currentPlayer.opponent
+        lastEnPassantOpportunity = Self.enPassantOpportunity(
+            on: board,
+            player: currentPlayer,
+            target: enPassantTarget,
+            castlingRights: castlingRights
+        )
         candidateSquares = []
         isChoosingCandidates = false
         plies.append(
@@ -405,7 +534,8 @@ final class ChessGame: ObservableObject {
             piece.player == currentPlayer && !Self.legalMoves(
                 from: square,
                 on: board,
-                castlingRights: castlingRights
+                castlingRights: castlingRights,
+                enPassantTarget: enPassantTarget
             ).isEmpty
         }
 
@@ -445,7 +575,194 @@ final class ChessGame: ObservableObject {
     }
 }
 
+private struct FENPosition {
+    let board: [Square: Piece]
+    let currentPlayer: Player
+    let castlingRights: CastlingRights
+    let enPassantTarget: Square?
+    let halfmoveClock: Int
+    let fullmoveNumber: Int
+}
+
+private enum FENError: LocalizedError {
+    case invalid(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalid(let message): "Invalid FEN: \(message)"
+        }
+    }
+}
+
 extension ChessGame {
+    private static func makeFEN(
+        board: [Square: Piece],
+        currentPlayer: Player,
+        castlingRights: CastlingRights,
+        enPassantTarget: Square?,
+        halfmoveClock: Int,
+        fullmoveNumber: Int
+    ) -> String {
+        let placement = (0..<8).reversed().map { rank in
+            var emptyCount = 0
+            var field = ""
+            for file in 0..<8 {
+                let square = Square(file: file, rank: rank)!
+                guard let piece = board[square] else {
+                    emptyCount += 1
+                    continue
+                }
+                if emptyCount > 0 {
+                    field += String(emptyCount)
+                    emptyCount = 0
+                }
+                field.append(fenCharacter(for: piece))
+            }
+            if emptyCount > 0 { field += String(emptyCount) }
+            return field
+        }.joined(separator: "/")
+
+        var rights = ""
+        if castlingRights.whiteKingSide { rights += "K" }
+        if castlingRights.whiteQueenSide { rights += "Q" }
+        if castlingRights.blackKingSide { rights += "k" }
+        if castlingRights.blackQueenSide { rights += "q" }
+
+        return [
+            placement,
+            currentPlayer == .white ? "w" : "b",
+            rights.isEmpty ? "-" : rights,
+            enPassantTarget?.algebraic ?? "-",
+            String(halfmoveClock),
+            String(fullmoveNumber)
+        ].joined(separator: " ")
+    }
+
+    private static func parseFEN(_ notation: String) throws -> FENPosition {
+        let fields = notation.split(whereSeparator: { $0.isWhitespace })
+        guard fields.count == 6 else {
+            throw FENError.invalid("use six space-separated fields")
+        }
+
+        let ranks = fields[0].split(separator: "/", omittingEmptySubsequences: false)
+        guard ranks.count == 8 else {
+            throw FENError.invalid("piece placement must contain eight ranks")
+        }
+
+        var board: [Square: Piece] = [:]
+        for (fenRank, field) in ranks.enumerated() {
+            let rank = 7 - fenRank
+            var file = 0
+            for character in field {
+                if let emptyCount = character.wholeNumberValue {
+                    guard (1...8).contains(emptyCount) else {
+                        throw FENError.invalid("rank \(8 - fenRank) has an invalid empty-square count")
+                    }
+                    file += emptyCount
+                } else if let piece = piece(forFENCharacter: character) {
+                    guard file < 8 else {
+                        throw FENError.invalid("rank \(8 - fenRank) is too wide")
+                    }
+                    board[Square(file: file, rank: rank)!] = piece
+                    file += 1
+                } else {
+                    throw FENError.invalid("\(character) is not a valid piece character")
+                }
+            }
+            guard file == 8 else {
+                throw FENError.invalid("rank \(8 - fenRank) must describe exactly eight squares")
+            }
+        }
+
+        guard board.values.filter({ $0 == Piece(kind: .king, player: .white) }).count == 1,
+              board.values.filter({ $0 == Piece(kind: .king, player: .black) }).count == 1 else {
+            throw FENError.invalid("a playable position needs exactly one king per side")
+        }
+
+        let currentPlayer: Player
+        switch fields[1] {
+        case "w": currentPlayer = .white
+        case "b": currentPlayer = .black
+        default: throw FENError.invalid("active color must be w or b")
+        }
+
+        let castlingRights = try parseCastlingRights(String(fields[2]))
+        let enPassantTarget = try parseEnPassantTarget(String(fields[3]), on: board)
+        guard let halfmoveClock = Int(fields[4]), halfmoveClock >= 0 else {
+            throw FENError.invalid("half-move clock must be zero or greater")
+        }
+        guard let fullmoveNumber = Int(fields[5]), fullmoveNumber > 0 else {
+            throw FENError.invalid("full-move number must be greater than zero")
+        }
+
+        return FENPosition(
+            board: board,
+            currentPlayer: currentPlayer,
+            castlingRights: castlingRights,
+            enPassantTarget: enPassantTarget,
+            halfmoveClock: halfmoveClock,
+            fullmoveNumber: fullmoveNumber
+        )
+    }
+
+    private static func fenCharacter(for piece: Piece) -> Character {
+        let character: Character
+        switch piece.kind {
+        case .king: character = "k"
+        case .queen: character = "q"
+        case .rook: character = "r"
+        case .bishop: character = "b"
+        case .knight: character = "n"
+        case .pawn: character = "p"
+        }
+        return piece.player == .white ? Character(String(character).uppercased()) : character
+    }
+
+    private static func piece(forFENCharacter character: Character) -> Piece? {
+        let player: Player = character.isUppercase ? .white : .black
+        let kind: PieceKind
+        switch character.lowercased() {
+        case "k": kind = .king
+        case "q": kind = .queen
+        case "r": kind = .rook
+        case "b": kind = .bishop
+        case "n": kind = .knight
+        case "p": kind = .pawn
+        default: return nil
+        }
+        return Piece(kind: kind, player: player)
+    }
+
+    private static func parseCastlingRights(_ field: String) throws -> CastlingRights {
+        if field == "-" { return .none }
+        var rights = CastlingRights.none
+        var seen: Set<Character> = []
+        for character in field {
+            guard seen.insert(character).inserted else {
+                throw FENError.invalid("castling rights cannot repeat \(character)")
+            }
+            switch character {
+            case "K": rights.whiteKingSide = true
+            case "Q": rights.whiteQueenSide = true
+            case "k": rights.blackKingSide = true
+            case "q": rights.blackQueenSide = true
+            default: throw FENError.invalid("\(character) is not a castling-rights code")
+            }
+        }
+        return rights
+    }
+
+    private static func parseEnPassantTarget(
+        _ field: String,
+        on board: [Square: Piece]
+    ) throws -> Square? {
+        if field == "-" { return nil }
+        guard let square = Square(field), [2, 5].contains(square.rank), board[square] == nil else {
+            throw FENError.invalid("en-passant target must be an empty square on rank 3 or 6")
+        }
+        return square
+    }
+
     static func startingBoard() -> [Square: Piece] {
         var board: [Square: Piece] = [:]
         let backRank: [PieceKind] = [.rook, .knight, .bishop, .queen, .king, .bishop, .knight, .rook]
@@ -551,20 +868,23 @@ extension ChessGame {
     static func legalMoves(
         from origin: Square,
         on board: [Square: Piece],
-        castlingRights: CastlingRights = .none
+        castlingRights: CastlingRights = .none,
+        enPassantTarget: Square? = nil
     ) -> [Square] {
         guard let movingPiece = board[origin] else { return [] }
 
         return pseudoLegalMoves(
             from: origin,
             on: board,
-            castlingRights: castlingRights
+            castlingRights: castlingRights,
+            enPassantTarget: enPassantTarget
         ).filter { destination in
             let simulatedBoard = applyingMove(
                 from: origin,
                 to: destination,
                 piece: movingPiece,
-                on: board
+                on: board,
+                enPassantTarget: enPassantTarget
             )
             return !isInCheck(movingPiece.player, on: simulatedBoard)
         }
@@ -585,12 +905,18 @@ extension ChessGame {
     static func pseudoLegalMoves(
         from origin: Square,
         on board: [Square: Piece],
-        castlingRights: CastlingRights = .none
+        castlingRights: CastlingRights = .none,
+        enPassantTarget: Square? = nil
     ) -> [Square] {
         guard let piece = board[origin] else { return [] }
 
         if piece.kind == .pawn {
-            return pawnMoves(from: origin, piece: piece, on: board)
+            return pawnMoves(
+                from: origin,
+                piece: piece,
+                on: board,
+                enPassantTarget: enPassantTarget
+            )
         }
 
         var moves = attackSquares(from: origin, on: board).filter { target in
@@ -652,11 +978,22 @@ extension ChessGame {
         from origin: Square,
         to destination: Square,
         piece: Piece,
-        on board: [Square: Piece]
+        on board: [Square: Piece],
+        enPassantTarget: Square? = nil
     ) -> [Square: Piece] {
         var updated = board
         updated[destination] = piece
         updated[origin] = nil
+
+        if let enPassant = enPassantCapture(
+            from: origin,
+            to: destination,
+            piece: piece,
+            on: board,
+            target: enPassantTarget
+        ) {
+            updated[enPassant.capturedPawn] = nil
+        }
 
         if let rookMove = castlingRookMove(for: piece, from: origin, to: destination),
            updated[rookMove.from] == Piece(kind: .rook, player: piece.player) {
@@ -785,7 +1122,8 @@ extension ChessGame {
     private static func pawnMoves(
         from origin: Square,
         piece: Piece,
-        on board: [Square: Piece]
+        on board: [Square: Piece],
+        enPassantTarget: Square?
     ) -> [Square] {
         let step = piece.player == .white ? 1 : -1
         let startingRank = piece.player == .white ? 1 : 6
@@ -809,7 +1147,88 @@ extension ChessGame {
             }
         }
 
+        if let enPassantTarget,
+           enPassantCapture(
+            from: origin,
+            to: enPassantTarget,
+            piece: piece,
+            on: board,
+            target: enPassantTarget
+           ) != nil {
+            moves.append(enPassantTarget)
+        }
+
         return moves
+    }
+
+    /// Validates the special capture without assuming the calling side can
+    /// legally expose its king. That final safety test happens in
+    /// `legalMoves`, after `applyingMove` removes the pawn beside the landing
+    /// square.
+    private static func enPassantCapture(
+        from origin: Square,
+        to destination: Square,
+        piece: Piece,
+        on board: [Square: Piece],
+        target: Square?
+    ) -> EnPassantCapture? {
+        let step = piece.player == .white ? 1 : -1
+        guard piece.kind == .pawn,
+              destination == target,
+              board[destination] == nil,
+              abs(destination.file - origin.file) == 1,
+              destination.rank - origin.rank == step,
+              let capturedPawn = Square(file: destination.file, rank: origin.rank),
+              board[capturedPawn] == Piece(kind: .pawn, player: piece.player.opponent) else {
+            return nil
+        }
+
+        return EnPassantCapture(
+            captor: piece,
+            from: origin,
+            landing: destination,
+            capturedPawn: capturedPawn
+        )
+    }
+
+    /// There may be one or two adjacent pawns, but each candidate must also
+    /// pass the king-safety test (for example, a pinned pawn cannot take).
+    private static func enPassantOpportunity(
+        on board: [Square: Piece],
+        player: Player,
+        target: Square?,
+        castlingRights: CastlingRights
+    ) -> EnPassantOpportunity? {
+        guard let target,
+              let vulnerablePawn = Square(
+                file: target.file,
+                rank: target.rank + (player == .white ? -1 : 1)
+              ),
+              board[vulnerablePawn] == Piece(kind: .pawn, player: player.opponent) else {
+            return nil
+        }
+
+        let capturingPawns = [-1, 1].compactMap { fileOffset -> Square? in
+            guard let origin = target.offset(file: fileOffset, rank: player == .white ? -1 : 1),
+                  board[origin] == Piece(kind: .pawn, player: player),
+                  legalMoves(
+                    from: origin,
+                    on: board,
+                    castlingRights: castlingRights,
+                    enPassantTarget: target
+                  ).contains(target) else {
+                return nil
+            }
+            return origin
+        }
+
+        guard !capturingPawns.isEmpty else { return nil }
+        return EnPassantOpportunity(
+            target: target,
+            vulnerablePawn: vulnerablePawn,
+            capturingPawns: Set(capturingPawns),
+            player: player
+        )
     }
 
     private static func raySquares(

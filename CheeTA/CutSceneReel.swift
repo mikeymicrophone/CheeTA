@@ -6,6 +6,8 @@ struct CutSceneEvent: Identifiable, Equatable {
     enum Kind: Equatable {
         case firstBlood(Capture)
         case queenDown(Capture)
+        case enPassantAvailable(EnPassantOpportunity)
+        case enPassantTaken(EnPassantCapture)
         case check(Player)
         case checkmate(winner: Player)
     }
@@ -13,26 +15,25 @@ struct CutSceneEvent: Identifiable, Equatable {
     let id = UUID()
     let kind: Kind
     let moveNumber: Int
+    /// Which ply triggered it, so a replay can drop the card back into the
+    /// exact spot it happened. Negative when nothing had been played yet.
+    let plyIndex: Int
 }
 
-/// Plays the recorded cut scenes back as a montage. Every card is built from
-/// three layers that drift at different rates — the parallax does the work
-/// that a camera move would do in an engine.
-struct CutSceneReelView: View {
-    let events: [CutSceneEvent]
-    let dismiss: () -> Void
+/// A single cut scene card. Three layers drift at different rates — the
+/// parallax does the work a camera move would do in an engine. Used both by
+/// the reel and inline in a move replay.
+struct CutSceneCardView: View {
+    let event: CutSceneEvent
+    var secondsOnScreen: Double = 2.4
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var index = 0
     @State private var drift: CGFloat = -1
-
-    private let secondsPerCard: Double = 2.4
 
     var body: some View {
         GeometryReader { geometry in
             let shortSide = min(geometry.size.width, geometry.size.height)
-            let barHeight = geometry.size.height * 0.12
-            let card = card(for: events[min(index, events.count - 1)])
+            let card = ReelCard(event: event)
 
             ZStack {
                 Color.black.ignoresSafeArea()
@@ -61,13 +62,9 @@ struct CutSceneReelView: View {
                     .blendMode(.overlay)
 
                 // Near: the type, moving most.
-                cardBody(card, shortSide: shortSide)
+                body(of: card, shortSide: shortSide)
                     .parallax(depth: 1, drift: drift)
-
-                ticker(shortSide: shortSide, barHeight: barHeight)
             }
-            .id(events[min(index, events.count - 1)].id)
-            .transition(.opacity)
             .frame(width: geometry.size.width, height: geometry.size.height)
             .overlay {
                 CutSceneLetterbox(
@@ -78,76 +75,25 @@ struct CutSceneReelView: View {
             .clipped()
         }
         .ignoresSafeArea()
-        .contentShape(Rectangle())
-        .onTapGesture(perform: advance)
-        .task(id: index) {
-            startDrift()
-            try? await Task.sleep(for: .seconds(secondsPerCard))
-            guard !Task.isCancelled else { return }
-            advance()
-        }
+        .onAppear(perform: startDrift)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityText)
-        .accessibilityHint("Tap for the next cut scene")
-        .accessibilityAddTraits(.isModal)
+        .accessibilityLabel({
+            let card = ReelCard(event: event)
+            return "\(card.headline), \(card.accent)."
+        }())
     }
 
-    private var accessibilityText: String {
-        let card = card(for: events[min(index, events.count - 1)])
-        return "Cut scene \(index + 1) of \(events.count). \(card.headline), \(card.accent)."
-    }
-
-    /// Restarts the sweep for each card, so every one gets a fresh push.
+    /// Each card gets its own sweep, so none of them inherit a stale offset.
     private func startDrift() {
         drift = -1
         guard !reduceMotion else { return }
 
-        withAnimation(.linear(duration: secondsPerCard + 0.6)) {
+        withAnimation(.linear(duration: secondsOnScreen + 0.6)) {
             drift = 1
         }
     }
 
-    private func advance() {
-        guard index + 1 < events.count else {
-            dismiss()
-            return
-        }
-
-        withAnimation(.easeInOut(duration: 0.28)) {
-            index += 1
-        }
-    }
-
-    /// Sits just under the top letterbox bar rather than behind it.
-    private func ticker(shortSide: CGFloat, barHeight: CGFloat) -> some View {
-        VStack {
-            HStack(spacing: 10) {
-                Text("CUT SCENE REEL")
-                    .font(.system(size: max(10, shortSide * 0.019), weight: .heavy))
-                    .fontWidth(.condensed)
-                    .tracking(2)
-
-                Text("\(index + 1)/\(events.count)")
-                    .font(.system(size: max(10, shortSide * 0.019), weight: .semibold, design: .monospaced))
-                    .foregroundStyle(CutSceneStyle.bone.opacity(0.6))
-
-                Spacer()
-
-                Text("TAP TO ADVANCE")
-                    .font(.system(size: max(9, shortSide * 0.016), weight: .bold))
-                    .tracking(1.4)
-                    .foregroundStyle(CutSceneStyle.bone.opacity(0.34))
-            }
-            .foregroundStyle(CutSceneStyle.bone.opacity(0.8))
-            .padding(.horizontal, shortSide * 0.06)
-            .padding(.top, barHeight + shortSide * 0.03)
-
-            Spacer()
-        }
-        .allowsHitTesting(false)
-    }
-
-    private func cardBody(_ card: ReelCard, shortSide: CGFloat) -> some View {
+    private func body(of card: ReelCard, shortSide: CGFloat) -> some View {
         VStack(spacing: shortSide * 0.012) {
             if let symbol = card.symbol {
                 Image(systemName: symbol)
@@ -192,76 +138,178 @@ struct CutSceneReelView: View {
         .multilineTextAlignment(.center)
         .padding(.horizontal, 24)
     }
+}
 
-    private struct ReelCard {
-        let eyebrow: String
-        let headline: String
-        let accent: String
-        let accentColor: Color
-        let footer: String
-        let glyph: String
-        let symbol: String?
-        let wash: Color
-        let washCenter: UnitPoint
+/// Plays the recorded cut scenes back as a montage, with nothing else between
+/// them. The move replay shows the same cards in their original places.
+struct CutSceneReelView: View {
+    let events: [CutSceneEvent]
+    let dismiss: () -> Void
+
+    @State private var index = 0
+
+    private let secondsPerCard: Double = 2.4
+
+    var body: some View {
+        let safeIndex = min(index, max(0, events.count - 1))
+
+        GeometryReader { geometry in
+            let shortSide = min(geometry.size.width, geometry.size.height)
+
+            ZStack {
+                if events.indices.contains(safeIndex) {
+                    CutSceneCardView(
+                        event: events[safeIndex],
+                        secondsOnScreen: secondsPerCard
+                    )
+                    .id(events[safeIndex].id)
+                    .transition(.opacity)
+                }
+
+                ticker(
+                    shortSide: shortSide,
+                    barHeight: geometry.size.height * 0.12,
+                    position: safeIndex
+                )
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .ignoresSafeArea()
+        .contentShape(Rectangle())
+        .onTapGesture(perform: advance)
+        .task(id: index) {
+            try? await Task.sleep(for: .seconds(secondsPerCard))
+            guard !Task.isCancelled else { return }
+            advance()
+        }
+        .accessibilityHint("Tap for the next cut scene")
+        .accessibilityAddTraits(.isModal)
     }
 
-    private func card(for event: CutSceneEvent) -> ReelCard {
-        switch event.kind {
-        case .firstBlood(let capture):
-            return ReelCard(
-                eyebrow: "FIRST BLOOD ON THE BOARD",
-                headline: "\(capture.piece.player.displayName) \(capture.piece.kind.rawValue)".uppercased(),
-                accent: "OFF THE BOARD",
-                accentColor: Color(red: 0.82, green: 0.16, blue: 0.10),
-                footer: "MOVE \(event.moveNumber)   ·   \(capture.square.algebraic.uppercased())   ·   TAKEN BY \(captorName(capture))",
-                glyph: capture.piece.symbol,
-                symbol: nil,
-                wash: Color(red: 0.62, green: 0.07, blue: 0.05),
-                washCenter: .bottom
-            )
+    private func advance() {
+        guard index + 1 < events.count else {
+            dismiss()
+            return
+        }
 
-        case .queenDown(let capture):
-            return ReelCard(
-                eyebrow: "THE CROWN FALLS",
-                headline: "\(capture.piece.player.displayName) QUEEN".uppercased(),
-                accent: "DETHRONED",
-                accentColor: Color(red: 0.99, green: 0.87, blue: 0.52),
-                footer: "MOVE \(event.moveNumber)   ·   \(capture.square.algebraic.uppercased())   ·   TAKEN BY \(captorName(capture))",
-                glyph: capture.piece.symbol,
-                symbol: "crown.fill",
-                wash: Color(red: 0.87, green: 0.72, blue: 0.35),
-                washCenter: .top
-            )
-
-        case .check(let player):
-            return ReelCard(
-                eyebrow: "TACTICAL EMERGENCY",
-                headline: "\(player.displayName) KING".uppercased(),
-                accent: "IN CHECK",
-                accentColor: Color(red: 1.0, green: 0.84, blue: 0.08),
-                footer: "MOVE \(event.moveNumber)   ·   THE KING IS IN TROUBLE",
-                glyph: player == .white ? "♔" : "♚",
-                symbol: "exclamationmark.triangle.fill",
-                wash: Color(red: 0.72, green: 0.42, blue: 0.02),
-                washCenter: .center
-            )
-
-        case .checkmate(let winner):
-            return ReelCard(
-                eyebrow: "NO WAY OUT",
-                headline: "\(winner.opponent.displayName) KING".uppercased(),
-                accent: "CHECKMATE",
-                accentColor: Color(red: 1.0, green: 0.25, blue: 0.08),
-                footer: "MOVE \(event.moveNumber)   ·   \(winner.displayName.uppercased()) TAKES IT",
-                glyph: winner.opponent == .white ? "♔" : "♚",
-                symbol: "flag.checkered",
-                wash: Color(red: 0.7, green: 0.1, blue: 0.04),
-                washCenter: .center
-            )
+        withAnimation(.easeInOut(duration: 0.28)) {
+            index += 1
         }
     }
 
-    private func captorName(_ capture: Capture) -> String {
+    /// Sits just under the top letterbox bar rather than behind it.
+    private func ticker(shortSide: CGFloat, barHeight: CGFloat, position: Int) -> some View {
+        VStack {
+            HStack(spacing: 10) {
+                Text("CUT SCENE REEL")
+                    .font(.system(size: max(10, shortSide * 0.019), weight: .heavy))
+                    .fontWidth(.condensed)
+                    .tracking(2)
+
+                Text("\(position + 1)/\(events.count)")
+                    .font(.system(size: max(10, shortSide * 0.019), weight: .semibold, design: .monospaced))
+                    .foregroundStyle(CutSceneStyle.bone.opacity(0.6))
+
+                Spacer()
+
+                Text("TAP TO ADVANCE")
+                    .font(.system(size: max(9, shortSide * 0.016), weight: .bold))
+                    .tracking(1.4)
+                    .foregroundStyle(CutSceneStyle.bone.opacity(0.34))
+            }
+            .foregroundStyle(CutSceneStyle.bone.opacity(0.8))
+            .padding(.horizontal, shortSide * 0.06)
+            .padding(.top, barHeight + shortSide * 0.03)
+
+            Spacer()
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// The look of one card, derived from the event it describes.
+private struct ReelCard {
+    let eyebrow: String
+    let headline: String
+    let accent: String
+    let accentColor: Color
+    let footer: String
+    let glyph: String
+    let symbol: String?
+    let wash: Color
+    let washCenter: UnitPoint
+
+    init(event: CutSceneEvent) {
+        switch event.kind {
+        case .firstBlood(let capture):
+            eyebrow = "FIRST BLOOD ON THE BOARD"
+            headline = "\(capture.piece.player.displayName) \(capture.piece.kind.rawValue)".uppercased()
+            accent = "OFF THE BOARD"
+            accentColor = Color(red: 0.82, green: 0.16, blue: 0.10)
+            footer = "MOVE \(event.moveNumber)   ·   \(capture.square.algebraic.uppercased())   ·   TAKEN BY \(Self.captorName(capture))"
+            glyph = capture.piece.symbol
+            symbol = nil
+            wash = Color(red: 0.62, green: 0.07, blue: 0.05)
+            washCenter = .bottom
+
+        case .queenDown(let capture):
+            eyebrow = "THE CROWN FALLS"
+            headline = "\(capture.piece.player.displayName) QUEEN".uppercased()
+            accent = "DETHRONED"
+            accentColor = Color(red: 0.99, green: 0.87, blue: 0.52)
+            footer = "MOVE \(event.moveNumber)   ·   \(capture.square.algebraic.uppercased())   ·   TAKEN BY \(Self.captorName(capture))"
+            glyph = capture.piece.symbol
+            symbol = "crown.fill"
+            wash = Color(red: 0.87, green: 0.72, blue: 0.35)
+            washCenter = .top
+
+        case .enPassantAvailable(let opportunity):
+            eyebrow = "RULE WINDOW OPEN"
+            headline = "EN PASSANT"
+            accent = "NOW OR NEVER"
+            accentColor = Color(red: 0.10, green: 0.86, blue: 0.96)
+            footer = "MOVE \(event.moveNumber)   ·   TAKE \(opportunity.target.algebraic.uppercased())   ·   ONLY THIS TURN"
+            glyph = "⇄"
+            symbol = "arrow.left.arrow.right"
+            wash = Color(red: 0.05, green: 0.56, blue: 0.72)
+            washCenter = .bottom
+
+        case .enPassantTaken(let capture):
+            eyebrow = "THE WINDOW CLOSED"
+            headline = "EN PASSANT"
+            accent = "TAKEN"
+            accentColor = Color(red: 0.62, green: 1.0, blue: 0.24)
+            footer = "MOVE \(event.moveNumber)   ·   \(capture.from.algebraic.uppercased()) → \(capture.landing.algebraic.uppercased())   ·   PAWN LIFTED FROM \(capture.capturedPawn.algebraic.uppercased())"
+            glyph = capture.captor.symbol
+            symbol = "arrow.turn.down.right"
+            wash = Color(red: 0.33, green: 0.72, blue: 0.10)
+            washCenter = .bottom
+
+        case .check(let player):
+            eyebrow = "TACTICAL EMERGENCY"
+            headline = "\(player.displayName) KING".uppercased()
+            accent = "IN CHECK"
+            accentColor = Color(red: 1.0, green: 0.84, blue: 0.08)
+            footer = "MOVE \(event.moveNumber)   ·   THE KING IS IN TROUBLE"
+            glyph = player == .white ? "♔" : "♚"
+            symbol = "exclamationmark.triangle.fill"
+            wash = Color(red: 0.72, green: 0.42, blue: 0.02)
+            washCenter = .center
+
+        case .checkmate(let winner):
+            eyebrow = "NO WAY OUT"
+            headline = "\(winner.opponent.displayName) KING".uppercased()
+            accent = "CHECKMATE"
+            accentColor = Color(red: 1.0, green: 0.25, blue: 0.08)
+            footer = "MOVE \(event.moveNumber)   ·   \(winner.displayName.uppercased()) TAKES IT"
+            glyph = winner.opponent == .white ? "♔" : "♚"
+            symbol = "flag.checkered"
+            wash = Color(red: 0.7, green: 0.1, blue: 0.04)
+            washCenter = .center
+        }
+    }
+
+    private static func captorName(_ capture: Capture) -> String {
         "\(capture.captor.player.displayName) \(capture.captor.kind.rawValue)".uppercased()
     }
 }

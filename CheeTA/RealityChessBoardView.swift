@@ -634,8 +634,23 @@ private enum RealityBoardScene {
         let pieceColor = colors.piece
         let accentColor = colors.accent
 
-        addPart(.generateCylinder(height: 0.13, radius: 0.34), y: 0.065, color: pieceColor, to: root)
-        addPart(.generateCylinder(height: 0.10, radius: 0.27), y: 0.18, color: accentColor, to: root)
+        // The base is part of the silhouette, not a mandatory uniform. The
+        // knight gets a hard-edged plinth, the rook a much wider footing, and
+        // the bishop a pointed, architectural stack.
+        switch piece.kind {
+        case .knight:
+            addPart(.generateBox(size: [0.68, 0.12, 0.62]), y: 0.06, color: pieceColor, to: root)
+            addPart(.generateBox(size: [0.56, 0.09, 0.50]), y: 0.165, color: accentColor, to: root)
+        case .rook:
+            addPart(.generateCylinder(height: 0.16, radius: 0.42), y: 0.08, color: pieceColor, to: root)
+            addPart(.generateCylinder(height: 0.08, radius: 0.35), y: 0.20, color: accentColor, to: root)
+        case .bishop:
+            addPart(.generateCone(height: 0.18, radius: 0.38), y: 0.09, color: pieceColor, to: root)
+            addPart(.generateCone(height: 0.12, radius: 0.30), y: 0.22, color: accentColor, to: root)
+        case .pawn, .queen, .king:
+            addPart(.generateCylinder(height: 0.13, radius: 0.34), y: 0.065, color: pieceColor, to: root)
+            addPart(.generateCylinder(height: 0.10, radius: 0.27), y: 0.18, color: accentColor, to: root)
+        }
 
         switch piece.kind {
         case .pawn:
@@ -643,13 +658,14 @@ private enum RealityBoardScene {
             addPart(.generateSphere(radius: 0.18), y: 0.70, color: pieceColor, to: root)
 
         case .rook:
-            addPart(.generateCylinder(height: 0.48, radius: 0.22), y: 0.46, color: pieceColor, to: root)
-            addPart(.generateBox(size: [0.50, 0.16, 0.50], cornerRadius: 0.035), y: 0.76, color: accentColor, to: root)
-            for x in [-0.18 as Float, 0.18] {
-                for z in [-0.18 as Float, 0.18] {
+            // A squat, wide keep instead of a thin column with a hat.
+            addPart(.generateBox(size: [0.64, 0.42, 0.64]), y: 0.47, color: pieceColor, to: root)
+            addPart(.generateBox(size: [0.74, 0.14, 0.74]), y: 0.75, color: accentColor, to: root)
+            for x in [-0.26 as Float, 0, 0.26] {
+                for z in [-0.26 as Float, 0.26] {
                     addPart(
-                        .generateBox(size: [0.13, 0.16, 0.13], cornerRadius: 0.02),
-                        position: [x, 0.90, z],
+                        .generateBox(size: [0.15, 0.18, 0.15]),
+                        position: [x, 0.91, z],
                         color: pieceColor,
                         to: root
                     )
@@ -657,25 +673,38 @@ private enum RealityBoardScene {
             }
 
         case .knight:
-            addPart(.generateCylinder(height: 0.27, radius: 0.21), y: 0.35, color: pieceColor, to: root)
-            let neck = model(
-                .generateBox(size: [0.27, 0.50, 0.31], cornerRadius: 0.10),
-                color: pieceColor,
-                roughness: 0.32
-            )
-            neck.position = [0, 0.64, -0.05]
-            neck.orientation = simd_quatf(angle: -0.30, axis: [1, 0, 0])
+            // A deliberately block-carved horse: no sphere, cylinder, or
+            // softened corners. The forward head, mane, ears, and muzzle give
+            // it a readable knight silhouette from the low camera angle.
+            addPart(.generateBox(size: [0.42, 0.31, 0.46]), position: [0, 0.37, 0.05], color: pieceColor, to: root)
+
+            let neck = model(.generateBox(size: [0.34, 0.54, 0.29]), color: pieceColor, roughness: 0.28)
+            neck.position = [0, 0.66, -0.05]
+            neck.orientation = simd_quatf(angle: -0.36, axis: [1, 0, 0])
             root.addChild(neck)
-            addPart(.generateBox(size: [0.30, 0.24, 0.44], cornerRadius: 0.12), position: [0, 0.89, -0.13], color: accentColor, to: root)
-            addPart(.generateBox(size: [0.08, 0.16, 0.08], cornerRadius: 0.025), position: [-0.11, 1.05, -0.13], color: pieceColor, to: root)
-            addPart(.generateBox(size: [0.08, 0.16, 0.08], cornerRadius: 0.025), position: [0.11, 1.05, -0.13], color: pieceColor, to: root)
+
+            let head = model(.generateBox(size: [0.42, 0.28, 0.42]), color: accentColor, roughness: 0.26)
+            head.position = [0, 0.98, -0.20]
+            head.orientation = simd_quatf(angle: -0.18, axis: [1, 0, 0])
+            root.addChild(head)
+
+            addPart(.generateBox(size: [0.31, 0.13, 0.20]), position: [0, 0.89, -0.47], color: pieceColor, to: root)
+            addPart(.generateBox(size: [0.12, 0.47, 0.16]), position: [0, 0.76, 0.22], color: accentColor, to: root)
+            addPart(.generateBox(size: [0.10, 0.22, 0.10]), position: [-0.13, 1.19, -0.22], color: pieceColor, to: root)
+            addPart(.generateBox(size: [0.10, 0.22, 0.10]), position: [0.13, 1.19, -0.22], color: pieceColor, to: root)
 
         case .bishop:
-            addPart(.generateCone(height: 0.64, radius: 0.23), y: 0.52, color: pieceColor, to: root)
-            addPart(.generateSphere(radius: 0.18), y: 0.88, color: accentColor, to: root)
-            let slash = model(.generateBox(size: [0.055, 0.30, 0.055], cornerRadius: 0.02), color: pieceColor)
-            slash.position = [0, 0.91, 0.15]
-            slash.orientation = simd_quatf(angle: -0.55, axis: [0, 0, 1])
+            // A crystalline mitre: two opposing cones replace the familiar
+            // round ball, and a bold diagonal cut makes its role legible.
+            addPart(.generateCone(height: 0.58, radius: 0.28), y: 0.50, color: pieceColor, to: root)
+            let mitre = model(.generateCone(height: 0.38, radius: 0.22), color: accentColor, roughness: 0.22)
+            mitre.position = [0, 0.96, 0]
+            mitre.orientation = simd_quatf(angle: .pi, axis: [1, 0, 0])
+            root.addChild(mitre)
+            addPart(.generateCone(height: 0.34, radius: 0.22), y: 1.12, color: pieceColor, to: root)
+            let slash = model(.generateBox(size: [0.09, 0.48, 0.08]), color: accentColor, roughness: 0.2)
+            slash.position = [0, 1.10, 0.15]
+            slash.orientation = simd_quatf(angle: -0.62, axis: [0, 0, 1])
             root.addChild(slash)
 
         case .queen:

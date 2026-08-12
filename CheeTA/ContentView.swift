@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @StateObject private var game = ChessGame()
@@ -11,9 +12,12 @@ struct ContentView: View {
     @State private var checkCutScene: CheckCutScene?
     @State private var firstCaptureCutScene: FirstCaptureCutScene?
     @State private var queenDownCutScene: QueenDownCutScene?
+    @State private var enPassantOpportunityCutScene: EnPassantOpportunity?
+    @State private var enPassantCaptureCutScene: EnPassantCapture?
     /// Every cut scene that fired this game, in order, for the reel.
     @State private var cutSceneLog: [CutSceneEvent] = []
     @State private var isReelPresented = false
+    @State private var isFENTransferPresented = false
     @StateObject private var replay = ReplayPlayer()
 
     var body: some View {
@@ -34,6 +38,9 @@ struct ContentView: View {
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground))
+        .sheet(isPresented: $isFENTransferPresented) {
+            FENTransferSheet(game: game)
+        }
         .overlay {
             if let checkCutScene {
                 CheckCutSceneView(checkedPlayer: checkCutScene.checkedPlayer) {
@@ -80,6 +87,34 @@ struct ContentView: View {
             }
         }
         .overlay {
+            if let enPassantOpportunityCutScene {
+                EnPassantOpportunityCutSceneView(opportunity: enPassantOpportunityCutScene) {
+                    dismissEnPassantOpportunityCutScene()
+                }
+                .transition(.opacity)
+                .zIndex(103)
+                .task(id: enPassantOpportunityCutScene.id) {
+                    try? await Task.sleep(for: .seconds(3.1))
+                    guard !Task.isCancelled else { return }
+                    dismissEnPassantOpportunityCutScene()
+                }
+            }
+        }
+        .overlay {
+            if let enPassantCaptureCutScene {
+                EnPassantCaptureCutSceneView(capture: enPassantCaptureCutScene) {
+                    dismissEnPassantCaptureCutScene()
+                }
+                .transition(.opacity)
+                .zIndex(104)
+                .task(id: enPassantCaptureCutScene.id) {
+                    try? await Task.sleep(for: .seconds(3.3))
+                    guard !Task.isCancelled else { return }
+                    dismissEnPassantCaptureCutScene()
+                }
+            }
+        }
+        .overlay {
             if let promotion = game.pendingPromotion {
                 PromotionPicker(player: promotion.pawn.player) { kind in
                     withAnimation(.snappy(duration: 0.18)) {
@@ -87,9 +122,19 @@ struct ContentView: View {
                     }
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.92)))
-                .zIndex(103)
+                .zIndex(105)
             }
         }
+        .overlay {
+            if let event = replay.activeCutScene {
+                CutSceneCardView(event: event, secondsOnScreen: 2.2)
+                    .id(event.id)
+                    .transition(.opacity)
+                .zIndex(105)
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.easeInOut(duration: 0.22), value: replay.activeCutScene)
         .overlay {
             if isReelPresented, !cutSceneLog.isEmpty {
                 CutSceneReelView(events: cutSceneLog) {
@@ -98,14 +143,17 @@ struct ContentView: View {
                     }
                 }
                 .transition(.opacity)
-                .zIndex(104)
+                .zIndex(106)
             }
         }
         .sensoryFeedback(.warning, trigger: checkCutScene?.id)
         .sensoryFeedback(.impact(weight: .heavy), trigger: firstCaptureCutScene?.id)
         .sensoryFeedback(.impact(weight: .heavy, intensity: 1), trigger: queenDownCutScene?.id)
+        .sensoryFeedback(.selection, trigger: enPassantOpportunityCutScene?.id)
+        .sensoryFeedback(.success, trigger: enPassantCaptureCutScene?.id)
         .onChange(of: game.captureCount) { _, newCount in
             guard newCount > 0, let capture = game.lastCapture else { return }
+            guard game.lastEnPassant == nil else { return }
 
             // A queen outranks first blood, including when she *is* first blood.
             if capture.piece.kind == .queen {
@@ -126,6 +174,16 @@ struct ContentView: View {
                 break
             }
         }
+        .onChange(of: game.lastEnPassantOpportunity) { _, opportunity in
+            guard let opportunity else { return }
+            record(.enPassantAvailable(opportunity))
+            presentEnPassantOpportunityCutScene(for: opportunity)
+        }
+        .onChange(of: game.lastEnPassant) { _, capture in
+            guard let capture else { return }
+            record(.enPassantTaken(capture))
+            presentEnPassantCaptureCutScene(for: capture)
+        }
         .onChange(of: game.plies.count) { _, newCount in
             // A restart or a preset load empties the history; the reel goes too.
             if newCount == 0 {
@@ -136,8 +194,24 @@ struct ContentView: View {
 
     private func startReplay(lastPlies: Int?) {
         let frames = game.replayFrames(lastPlies: lastPlies)
+        guard let opening = frames.first else { return }
+
+        // The board frames and the recorded cut scenes are woven into one
+        // timeline, so a replay plays the game back the way it was lived.
+        let start = game.replayStartIndex(lastPlies: lastPlies)
+        var steps: [ReplayStep] = [.position(opening)]
+
+        for (offset, frame) in frames.dropFirst().enumerated() {
+            let plyIndex = start + offset
+            steps.append(.position(frame))
+
+            for event in cutSceneLog where event.plyIndex == plyIndex {
+                steps.append(.cutScene(event))
+            }
+        }
+
         replay.play(
-            frames,
+            steps,
             title: lastPlies == nil ? "Replay" : "Last \(lastPlies!)",
             in: game
         )
@@ -145,7 +219,12 @@ struct ContentView: View {
 
     private func record(_ kind: CutSceneEvent.Kind) {
         cutSceneLog.append(
-            CutSceneEvent(kind: kind, moveNumber: max(1, (game.plies.count + 1) / 2))
+            CutSceneEvent(
+                kind: kind,
+                moveNumber: max(1, (game.plies.count + 1) / 2),
+                // The ply that just landed is the one that caused this.
+                plyIndex: game.plies.count - 1
+            )
         )
     }
 
@@ -184,8 +263,40 @@ struct ContentView: View {
         }
     }
 
+    private func presentEnPassantOpportunityCutScene(for opportunity: EnPassantOpportunity) {
+        withAnimation(.snappy(duration: 0.16)) {
+            checkCutScene = nil
+            enPassantOpportunityCutScene = opportunity
+        }
+    }
+
+    private func dismissEnPassantOpportunityCutScene() {
+        withAnimation(.easeOut(duration: 0.22)) {
+            enPassantOpportunityCutScene = nil
+        }
+    }
+
+    private func presentEnPassantCaptureCutScene(for capture: EnPassantCapture) {
+        withAnimation(.snappy(duration: 0.18)) {
+            checkCutScene = nil
+            firstCaptureCutScene = nil
+            queenDownCutScene = nil
+            enPassantOpportunityCutScene = nil
+            enPassantCaptureCutScene = capture
+        }
+    }
+
+    private func dismissEnPassantCaptureCutScene() {
+        withAnimation(.easeOut(duration: 0.24)) {
+            enPassantCaptureCutScene = nil
+        }
+    }
+
     private func presentCheckCutScene(for checkedPlayer: Player) {
-        guard firstCaptureCutScene == nil, queenDownCutScene == nil else { return }
+        guard firstCaptureCutScene == nil,
+              queenDownCutScene == nil,
+              enPassantOpportunityCutScene == nil,
+              enPassantCaptureCutScene == nil else { return }
 
         withAnimation(.snappy(duration: 0.18)) {
             checkCutScene = CheckCutScene(checkedPlayer: checkedPlayer)
@@ -315,6 +426,14 @@ struct ContentView: View {
                 controlIcon("flag.checkered", tint: .blue)
             }
             .accessibilityLabel("Positions")
+
+            Button {
+                isFENTransferPresented = true
+            } label: {
+                controlIcon("arrow.left.arrow.right.square", tint: .indigo)
+            }
+            .accessibilityLabel("Position code")
+            .accessibilityHint("Copy or load a FEN position")
 
             Menu {
                 Section("Replay") {
@@ -1009,6 +1128,84 @@ private struct PromotionPicker: View {
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
             .shadow(color: .black.opacity(0.3), radius: 24, y: 12)
             .padding(24)
+        }
+    }
+}
+
+private struct FENTransferSheet: View {
+    @ObservedObject var game: ChessGame
+    @Environment(\.dismiss) private var dismiss
+    @State private var input = ""
+    @State private var errorMessage: String?
+    @State private var copied = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Current position") {
+                    Text(game.fen)
+                        .font(.system(.footnote, design: .monospaced))
+                        .textSelection(.enabled)
+
+                    Button {
+                        UIPasteboard.general.string = game.fen
+                        copied = true
+                    } label: {
+                        Label(copied ? "FEN copied" : "Copy FEN", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    }
+                }
+
+                Section("Load a FEN") {
+                    TextEditor(text: $input)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 110)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+
+                    HStack {
+                        Button("Paste") {
+                            input = UIPasteboard.general.string ?? ""
+                            errorMessage = nil
+                        }
+                        Spacer()
+                        Button("Load position") {
+                            loadPosition()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+
+                    if let errorMessage {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                Section {
+                    Text("Loading a FEN starts a fresh local game. It preserves the side to move, castling rights, clocks, and en-passant target.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Position code")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .onAppear {
+            input = game.fen
+        }
+    }
+
+    private func loadPosition() {
+        do {
+            try game.load(fen: input)
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }

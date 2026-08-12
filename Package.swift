@@ -22,6 +22,7 @@ let package = Package(
                 "ContentView.swift",
                 "CutSceneReel.swift",
                 "CutSceneStyle.swift",
+                "EnPassantCutSceneViews.swift",
                 "FirstCaptureCutSceneView.swift",
                 "QueenDownCutSceneView.swift",
                 "RealityChessBoardView.swift",

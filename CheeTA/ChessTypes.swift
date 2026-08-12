@@ -82,6 +82,31 @@ struct Capture: Hashable, Sendable {
     let square: Square
 }
 
+/// The one-ply pawn capture where the taken pawn is beside the destination,
+/// rather than on it. Keeping that distinction explicit lets the board,
+/// replay, and cut scenes all describe the same unusual move accurately.
+struct EnPassantCapture: Hashable, Sendable, Identifiable {
+    let captor: Piece
+    let from: Square
+    let landing: Square
+    let capturedPawn: Square
+
+    var id: String { "\(from.algebraic)-\(landing.algebraic)-\(capturedPawn.algebraic)" }
+}
+
+/// A legal en-passant response created by the immediately preceding
+/// two-square pawn move. It lasts only for the side now to move.
+struct EnPassantOpportunity: Hashable, Sendable, Identifiable {
+    let target: Square
+    let vulnerablePawn: Square
+    let capturingPawns: Set<Square>
+    let player: Player
+
+    var id: String {
+        "\(player.rawValue)-\(target.algebraic)-\(vulnerablePawn.algebraic)-\(capturingPawns.map(\.algebraic).sorted().joined(separator: ","))"
+    }
+}
+
 /// One played ply, kept with the position it produced so a replay never has to
 /// re-derive legality — it just shows the boards again, in order.
 struct RecordedPly: Hashable, Sendable {
@@ -103,11 +128,19 @@ struct ChessMove: Hashable, Sendable {
     let to: Square
     /// Non-nil only when a pawn reaches the far rank and changes identity.
     let promotion: PieceKind?
+    /// True when a pawn captured the adjacent pawn after its two-square move.
+    let isEnPassant: Bool
 
-    init(from: Square, to: Square, promotion: PieceKind? = nil) {
+    init(
+        from: Square,
+        to: Square,
+        promotion: PieceKind? = nil,
+        isEnPassant: Bool = false
+    ) {
         self.from = from
         self.to = to
         self.promotion = promotion
+        self.isEnPassant = isEnPassant
     }
 }
 
