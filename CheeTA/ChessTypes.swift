@@ -75,6 +75,29 @@ struct Square: Hashable, Sendable, Identifiable {
     }
 }
 
+/// One piece taken off the board, with enough context for a view to narrate it.
+struct Capture: Hashable, Sendable {
+    let piece: Piece
+    let captor: Piece
+    let square: Square
+}
+
+/// One played ply, kept with the position it produced so a replay never has to
+/// re-derive legality — it just shows the boards again, in order.
+struct RecordedPly: Hashable, Sendable {
+    let move: ChessMove
+    let capture: Capture?
+    let boardAfter: [Square: Piece]
+    let playerToMoveAfter: Player
+}
+
+/// A single step of playback.
+struct ReplayFrame: Hashable, Sendable {
+    let board: [Square: Piece]
+    let move: ChessMove?
+    let playerToMove: Player
+}
+
 struct ChessMove: Hashable, Sendable {
     let from: Square
     let to: Square

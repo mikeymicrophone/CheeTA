@@ -323,6 +323,127 @@ final class ChessGameTests: XCTestCase {
         XCTAssertEqual(game.threatCorridors.count, game.board.count)
     }
 
+    func testCaptureRecordsVictimCaptorAndSquare() {
+        let game = ChessGame(
+            board: makeBoard([
+                ("e1", .king, .white),
+                ("e8", .king, .black),
+                ("d4", .bishop, .white),
+                ("g7", .knight, .black)
+            ])
+        )
+
+        XCTAssertNil(game.lastCapture)
+        XCTAssertEqual(game.captureCount, 0)
+
+        play("d4", "g7", in: game)
+
+        XCTAssertEqual(game.captureCount, 1)
+        XCTAssertEqual(game.lastCapture?.piece, Piece(kind: .knight, player: .black))
+        XCTAssertEqual(game.lastCapture?.captor, Piece(kind: .bishop, player: .white))
+        XCTAssertEqual(game.lastCapture?.square, Square("g7")!)
+    }
+
+    func testQuietMovesLeaveTheCaptureCountAlone() {
+        let game = ChessGame()
+
+        play("e2", "e4", in: game)
+
+        XCTAssertNil(game.lastCapture)
+        XCTAssertEqual(game.captureCount, 0)
+    }
+
+    func testResetAndLoadClearCaptureHistory() {
+        let game = ChessGame(
+            board: makeBoard([
+                ("e1", .king, .white),
+                ("e8", .king, .black),
+                ("d4", .bishop, .white),
+                ("g7", .knight, .black)
+            ])
+        )
+        play("d4", "g7", in: game)
+        XCTAssertEqual(game.captureCount, 1)
+
+        game.reset()
+        XCTAssertNil(game.lastCapture)
+        XCTAssertEqual(game.captureCount, 0)
+
+        play("e2", "e4", in: game)
+        game.load(.endgame)
+        XCTAssertNil(game.lastCapture)
+        XCTAssertEqual(game.captureCount, 0)
+    }
+
+    func testEveryPlyIsRecordedWithThePositionItProduced() {
+        let game = ChessGame()
+
+        play("e2", "e4", in: game)
+        play("d7", "d5", in: game)
+
+        XCTAssertEqual(game.plies.count, 2)
+        XCTAssertEqual(game.plies[0].move, ChessMove(from: Square("e2")!, to: Square("e4")!))
+        XCTAssertEqual(game.plies[0].playerToMoveAfter, .black)
+        XCTAssertEqual(game.plies[0].boardAfter[Square("e4")!], Piece(kind: .pawn, player: .white))
+        XCTAssertNil(game.plies[0].boardAfter[Square("e2")!])
+        XCTAssertNil(game.plies[1].capture)
+    }
+
+    func testWholeGameReplayStartsFromTheOpeningPosition() {
+        let game = ChessGame()
+        play("e2", "e4", in: game)
+        play("d7", "d5", in: game)
+
+        let frames = game.replayFrames()
+
+        XCTAssertEqual(frames.count, 3)
+        XCTAssertNil(frames[0].move)
+        XCTAssertEqual(frames[0].playerToMove, .white)
+        XCTAssertEqual(frames[0].board[Square("e2")!], Piece(kind: .pawn, player: .white))
+        XCTAssertEqual(frames[2].board[Square("d5")!], Piece(kind: .pawn, player: .black))
+    }
+
+    func testLimitedReplayStartsFromThePositionBeforeItsFirstPly() {
+        let game = ChessGame()
+        play("e2", "e4", in: game)
+        play("d7", "d5", in: game)
+        play("g1", "f3", in: game)
+
+        let frames = game.replayFrames(lastPlies: 1)
+
+        XCTAssertEqual(frames.count, 2)
+        XCTAssertEqual(frames[0].board[Square("g1")!], Piece(kind: .knight, player: .white))
+        XCTAssertEqual(frames[1].board[Square("f3")!], Piece(kind: .knight, player: .white))
+    }
+
+    func testReplayParksTheLiveGameAndRestoresIt() {
+        let game = ChessGame()
+        play("e2", "e4", in: game)
+        play("d7", "d5", in: game)
+        let liveBoard = game.board
+
+        let frames = game.replayFrames()
+        game.beginReplay()
+        game.show(frames[0])
+
+        XCTAssertTrue(game.isReplaying)
+        XCTAssertEqual(game.board[Square("e2")!], Piece(kind: .pawn, player: .white))
+
+        // Taps are inert while the board belongs to the replay.
+        play("e2", "e4", in: game)
+        XCTAssertEqual(game.plies.count, 2)
+
+        game.endReplay()
+
+        XCTAssertFalse(game.isReplaying)
+        XCTAssertEqual(game.board, liveBoard)
+        XCTAssertEqual(game.currentPlayer, .white)
+    }
+
+    func testReplayFramesAreEmptyBeforeAnyMove() {
+        XCTAssertTrue(ChessGame().replayFrames().isEmpty)
+    }
+
     private func makeBoard(_ entries: [(String, PieceKind, Player)]) -> [Square: Piece] {
         Dictionary(uniqueKeysWithValues: entries.map { notation, kind, player in
             (Square(notation)!, Piece(kind: kind, player: player))

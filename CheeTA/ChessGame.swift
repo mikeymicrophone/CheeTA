@@ -8,10 +8,31 @@ final class ChessGame: ObservableObject {
     @Published private(set) var selectedSquare: Square?
     @Published private(set) var legalTargets: Set<Square>
     @Published private(set) var lastMove: ChessMove?
+    @Published private(set) var lastCapture: Capture?
+    /// Lets a view tell the first capture of the game from every later one.
+    @Published private(set) var captureCount: Int
     @Published private(set) var status: PositionStatus
     @Published private(set) var positionPreset: PositionPreset?
     @Published private(set) var candidateSquares: Set<Square>
     @Published private(set) var isChoosingCandidates: Bool
+    /// Every ply played since the position was set up, oldest first.
+    @Published private(set) var plies: [RecordedPly]
+    /// While true the published board is a replay frame, not the live game.
+    @Published private(set) var isReplaying: Bool
+
+    private var openingBoard: [Square: Piece]
+    private var openingPlayer: Player
+    private var liveState: LiveState?
+
+    /// The live game, parked while a replay borrows the published position.
+    private struct LiveState {
+        let board: [Square: Piece]
+        let currentPlayer: Player
+        let lastMove: ChessMove?
+        let selectedSquare: Square?
+        let legalTargets: Set<Square>
+        let candidateSquares: Set<Square>
+    }
 
     init(
         board: [Square: Piece] = ChessGame.startingBoard(),
@@ -22,10 +43,16 @@ final class ChessGame: ObservableObject {
         self.selectedSquare = nil
         self.legalTargets = []
         self.lastMove = nil
+        self.lastCapture = nil
+        self.captureCount = 0
         self.status = .playing
         self.positionPreset = nil
         self.candidateSquares = []
         self.isChoosingCandidates = false
+        self.plies = []
+        self.isReplaying = false
+        self.openingBoard = board
+        self.openingPlayer = currentPlayer
         refreshStatus()
     }
 
@@ -52,11 +79,17 @@ final class ChessGame: ObservableObject {
     }
 
     func reset() {
+        endReplay()
         board = Self.startingBoard()
         currentPlayer = .white
+        openingBoard = board
+        openingPlayer = .white
+        plies = []
         selectedSquare = nil
         legalTargets = []
         lastMove = nil
+        lastCapture = nil
+        captureCount = 0
         positionPreset = nil
         candidateSquares = []
         isChoosingCandidates = false
@@ -64,11 +97,17 @@ final class ChessGame: ObservableObject {
     }
 
     func load(_ preset: PositionPreset) {
+        endReplay()
         board = Self.board(for: preset)
         currentPlayer = Self.currentPlayer(for: preset)
+        openingBoard = board
+        openingPlayer = currentPlayer
+        plies = []
         selectedSquare = nil
         legalTargets = []
         lastMove = nil
+        lastCapture = nil
+        captureCount = 0
         positionPreset = preset
         candidateSquares = []
         isChoosingCandidates = false
@@ -111,7 +150,7 @@ final class ChessGame: ObservableObject {
     }
 
     func tap(_ square: Square) {
-        guard !status.isFinished else { return }
+        guard !status.isFinished, !isReplaying else { return }
 
         if let selectedSquare, legalTargets.contains(square) {
             makeMove(from: selectedSquare, to: square)
@@ -180,6 +219,79 @@ final class ChessGame: ObservableObject {
         isChoosingCandidates = false
     }
 
+    // MARK: - Replay
+
+    /// Frames for playing the game back: the position before the first ply
+    /// shown, then one frame per ply. `lastPlies` nil replays everything.
+    func replayFrames(lastPlies limit: Int? = nil) -> [ReplayFrame] {
+        guard !plies.isEmpty else { return [] }
+
+        let start = limit.map { max(0, plies.count - max(0, $0)) } ?? 0
+        let opening: ReplayFrame
+        if start == 0 {
+            opening = ReplayFrame(
+                board: openingBoard,
+                move: nil,
+                playerToMove: openingPlayer
+            )
+        } else {
+            let previous = plies[start - 1]
+            opening = ReplayFrame(
+                board: previous.boardAfter,
+                move: previous.move,
+                playerToMove: previous.playerToMoveAfter
+            )
+        }
+
+        return [opening] + plies[start...].map {
+            ReplayFrame(
+                board: $0.boardAfter,
+                move: $0.move,
+                playerToMove: $0.playerToMoveAfter
+            )
+        }
+    }
+
+    /// Parks the live game so playback can borrow the published position.
+    /// Taps are ignored until `endReplay()` puts it back.
+    func beginReplay() {
+        guard !isReplaying else { return }
+
+        liveState = LiveState(
+            board: board,
+            currentPlayer: currentPlayer,
+            lastMove: lastMove,
+            selectedSquare: selectedSquare,
+            legalTargets: legalTargets,
+            candidateSquares: candidateSquares
+        )
+        selectedSquare = nil
+        legalTargets = []
+        isChoosingCandidates = false
+        isReplaying = true
+    }
+
+    func show(_ frame: ReplayFrame) {
+        guard isReplaying else { return }
+
+        board = frame.board
+        currentPlayer = frame.playerToMove
+        lastMove = frame.move
+    }
+
+    func endReplay() {
+        guard isReplaying, let liveState else { return }
+
+        board = liveState.board
+        currentPlayer = liveState.currentPlayer
+        lastMove = liveState.lastMove
+        selectedSquare = liveState.selectedSquare
+        legalTargets = liveState.legalTargets
+        candidateSquares = liveState.candidateSquares
+        self.liveState = nil
+        isReplaying = false
+    }
+
     private func toggleCandidate(_ square: Square) {
         if candidateSquares.contains(square) {
             candidateSquares.remove(square)
@@ -191,14 +303,34 @@ final class ChessGame: ObservableObject {
     private func makeMove(from origin: Square, to destination: Square) {
         guard let movingPiece = board[origin], movingPiece.player == currentPlayer else { return }
 
+        var capture: Capture?
+        if let takenPiece = board[destination] {
+            capture = Capture(
+                piece: takenPiece,
+                captor: movingPiece,
+                square: destination
+            )
+            lastCapture = capture
+            captureCount += 1
+        }
+
         board[destination] = movingPiece
         board[origin] = nil
-        lastMove = ChessMove(from: origin, to: destination)
+        let move = ChessMove(from: origin, to: destination)
+        lastMove = move
         selectedSquare = nil
         legalTargets = []
         currentPlayer = currentPlayer.opponent
         candidateSquares = []
         isChoosingCandidates = false
+        plies.append(
+            RecordedPly(
+                move: move,
+                capture: capture,
+                boardAfter: board,
+                playerToMoveAfter: currentPlayer
+            )
+        )
         refreshStatus()
     }
 

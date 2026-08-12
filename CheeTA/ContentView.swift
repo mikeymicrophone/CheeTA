@@ -9,10 +9,22 @@ struct ContentView: View {
     @State private var isLightLoose = false
     @State private var isSceneControlsPresented = false
     @State private var checkCutScene: CheckCutScene?
+    @State private var firstCaptureCutScene: FirstCaptureCutScene?
+    @StateObject private var replay = ReplayPlayer()
 
     var body: some View {
         VStack(spacing: 20) {
             board
+                .overlay(alignment: .bottom) {
+                    if let progress = replay.progress {
+                        ReplayBadge(progress: progress) {
+                            replay.stop(in: game)
+                        }
+                        .padding(.bottom, 18)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                }
+                .animation(.snappy(duration: 0.24), value: replay.progress)
             controlBar
         }
         .padding(24)
@@ -32,7 +44,26 @@ struct ContentView: View {
                 }
             }
         }
+        .overlay {
+            if let firstCaptureCutScene {
+                FirstCaptureCutSceneView(capture: firstCaptureCutScene.capture) {
+                    dismissFirstCaptureCutScene()
+                }
+                .transition(.opacity)
+                .zIndex(101)
+                .task(id: firstCaptureCutScene.id) {
+                    try? await Task.sleep(for: .seconds(2.9))
+                    guard !Task.isCancelled else { return }
+                    dismissFirstCaptureCutScene()
+                }
+            }
+        }
         .sensoryFeedback(.warning, trigger: checkCutScene?.id)
+        .sensoryFeedback(.impact(weight: .heavy), trigger: firstCaptureCutScene?.id)
+        .onChange(of: game.captureCount) { _, newCount in
+            guard newCount == 1, let capture = game.lastCapture else { return }
+            presentFirstCaptureCutScene(for: capture)
+        }
         .onChange(of: game.status) { _, newStatus in
             switch newStatus {
             case .check(let checkedPlayer):
@@ -45,7 +76,32 @@ struct ContentView: View {
         }
     }
 
+    private func startReplay(lastPlies: Int?) {
+        let frames = game.replayFrames(lastPlies: lastPlies)
+        replay.play(
+            frames,
+            title: lastPlies == nil ? "Replay" : "Last \(lastPlies!)",
+            in: game
+        )
+    }
+
+    private func presentFirstCaptureCutScene(for capture: Capture) {
+        withAnimation(.snappy(duration: 0.16)) {
+            // A capture that also gives check gets one scene, not two.
+            checkCutScene = nil
+            firstCaptureCutScene = FirstCaptureCutScene(capture: capture)
+        }
+    }
+
+    private func dismissFirstCaptureCutScene() {
+        withAnimation(.easeOut(duration: 0.22)) {
+            firstCaptureCutScene = nil
+        }
+    }
+
     private func presentCheckCutScene(for checkedPlayer: Player) {
+        guard firstCaptureCutScene == nil else { return }
+
         withAnimation(.snappy(duration: 0.18)) {
             checkCutScene = CheckCutScene(checkedPlayer: checkedPlayer)
         }
@@ -157,6 +213,31 @@ struct ContentView: View {
                 controlIcon("flag.checkered", tint: .blue)
             }
             .accessibilityLabel("Positions")
+
+            Menu {
+                Section("Replay") {
+                    Button {
+                        startReplay(lastPlies: nil)
+                    } label: {
+                        Label("Replay whole game", systemImage: "play.circle")
+                    }
+
+                    Button {
+                        startReplay(lastPlies: 10)
+                    } label: {
+                        Label("Replay last 10 moves", systemImage: "gobackward.10")
+                    }
+                    .disabled(game.plies.count <= 1)
+                }
+            } label: {
+                controlIcon(
+                    "play.rectangle",
+                    tint: .green,
+                    isActive: replay.isPlaying
+                )
+            }
+            .disabled(game.plies.isEmpty)
+            .accessibilityLabel("Replay")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -281,6 +362,11 @@ struct ContentView: View {
 private struct CheckCutScene: Identifiable, Equatable {
     let id = UUID()
     let checkedPlayer: Player
+}
+
+private struct FirstCaptureCutScene: Identifiable, Equatable {
+    let id = UUID()
+    let capture: Capture
 }
 
 private enum BoardDimension: String, CaseIterable, Identifiable {
