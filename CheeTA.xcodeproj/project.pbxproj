@@ -15,6 +15,7 @@
 		100000000000000000000006 /* ChessGameTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000006 /* ChessGameTests.swift */; };
 		100000000000000000000007 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* XCTest.framework */; };
 		100000000000000000000008 /* RealityChessBoardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000010 /* RealityChessBoardView.swift */; };
+		100000000000000000000009 /* CheckCutSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000011 /* CheckCutSceneView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -38,6 +39,7 @@
 		200000000000000000000008 /* CheeTATests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CheeTATests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		200000000000000000000009 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 		200000000000000000000010 /* RealityChessBoardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealityChessBoardView.swift; sourceTree = "<group>"; };
+		200000000000000000000011 /* CheckCutSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckCutSceneView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -77,6 +79,7 @@
 				200000000000000000000003 /* ChessTypes.swift */,
 				200000000000000000000004 /* ChessGame.swift */,
 				200000000000000000000010 /* RealityChessBoardView.swift */,
+				200000000000000000000011 /* CheckCutSceneView.swift */,
 				200000000000000000000005 /* Assets.xcassets */,
 			);
 			path = CheeTA;
@@ -212,6 +215,7 @@
 				100000000000000000000003 /* ChessTypes.swift in Sources */,
 				100000000000000000000004 /* ChessGame.swift in Sources */,
 				100000000000000000000008 /* RealityChessBoardView.swift in Sources */,
+				100000000000000000000009 /* CheckCutSceneView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

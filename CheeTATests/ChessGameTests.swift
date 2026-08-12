@@ -156,6 +156,17 @@ final class ChessGameTests: XCTestCase {
         XCTAssertEqual(game.currentPlayer, .white)
     }
 
+    func testPlayedMoveCanEnterCheckBeforeCheckmate() {
+        let game = ChessGame()
+
+        play("e2", "e4", in: game)
+        play("f7", "f6", in: game)
+        play("d1", "h5", in: game)
+
+        XCTAssertEqual(game.status, .check(.black))
+        XCTAssertEqual(game.currentPlayer, .black)
+    }
+
     func testThreatCorridorUsesAttacksRatherThanLegalMoves() {
         let board = makeBoard([
             ("e1", .king, .white),

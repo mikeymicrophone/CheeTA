@@ -8,6 +8,8 @@ Threat corridors are a passive tactical overlay: every piece continuously projec
 
 On every turn, each piece belonging to the current player with at least one legal move receives a pulsing candidate marker. The Candidates panel can enter a dedicated picking mode where tapping movable pieces builds a smaller candidate set; ordinary move-selection taps never narrow the automatic set. Pulse All restores every movable piece. Candidate choices reset after a move, restart, or position change.
 
+Entering check or checkmate now interrupts play with a deliberately lo-fi arcade cut scene. It identifies the threatened king, gives warning haptic feedback, dismisses itself after a short beat, and can be skipped immediately with a tap. The scene is isolated from the rules and board renderers so its art direction can evolve independently.
+
 The Opening, Midgame, and Endgame buttons load curated, playable positions for quick scenario exploration. Loading a scenario clears transient move highlights and immediately rebuilds the passive threat map.
 
 This first version intentionally omits castling, en passant, and promotion.

@@ -4,6 +4,7 @@ struct ContentView: View {
     @StateObject private var game = ChessGame()
     @State private var threatDisplayMode: ThreatDisplayMode = .enemyContact
     @State private var boardDimension: BoardDimension = .threeD
+    @State private var checkCutScene: CheckCutScene?
 
     var body: some View {
         GeometryReader { geometry in
@@ -26,6 +27,43 @@ struct ContentView: View {
             .padding(24)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(.systemBackground))
+        }
+        .overlay {
+            if let checkCutScene {
+                CheckCutSceneView(checkedPlayer: checkCutScene.checkedPlayer) {
+                    dismissCheckCutScene()
+                }
+                .transition(.opacity.combined(with: .scale(scale: 1.08)))
+                .zIndex(100)
+                .task(id: checkCutScene.id) {
+                    try? await Task.sleep(for: .seconds(2.4))
+                    guard !Task.isCancelled else { return }
+                    dismissCheckCutScene()
+                }
+            }
+        }
+        .sensoryFeedback(.warning, trigger: checkCutScene?.id)
+        .onChange(of: game.status) { _, newStatus in
+            switch newStatus {
+            case .check(let checkedPlayer):
+                presentCheckCutScene(for: checkedPlayer)
+            case .checkmate(let winner):
+                presentCheckCutScene(for: winner.opponent)
+            case .playing, .stalemate:
+                break
+            }
+        }
+    }
+
+    private func presentCheckCutScene(for checkedPlayer: Player) {
+        withAnimation(.snappy(duration: 0.18)) {
+            checkCutScene = CheckCutScene(checkedPlayer: checkedPlayer)
+        }
+    }
+
+    private func dismissCheckCutScene() {
+        withAnimation(.easeOut(duration: 0.18)) {
+            checkCutScene = nil
         }
     }
 
@@ -187,6 +225,11 @@ struct ContentView: View {
         }
     }
 
+}
+
+private struct CheckCutScene: Identifiable, Equatable {
+    let id = UUID()
+    let checkedPlayer: Player
 }
 
 private enum BoardDimension: String, CaseIterable, Identifiable {

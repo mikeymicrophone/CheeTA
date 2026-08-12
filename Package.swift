@@ -18,6 +18,7 @@ let package = Package(
             exclude: [
                 "Assets.xcassets",
                 "CheeTAApp.swift",
+                "CheckCutSceneView.swift",
                 "ContentView.swift",
                 "RealityChessBoardView.swift"
             ],
