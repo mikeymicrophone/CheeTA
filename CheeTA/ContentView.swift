@@ -4,12 +4,16 @@ struct ContentView: View {
     @StateObject private var game = ChessGame()
     @State private var threatDisplayMode: ThreatDisplayMode = .enemyContact
     @State private var boardDimension: BoardDimension = .threeD
-    @State private var boardOpacity = 1.0
+    @State private var boardOpacity = 0.06
     @State private var piecePalette: PiecePalette = .arcade
     @State private var isLightLoose = false
     @State private var isSceneControlsPresented = false
     @State private var checkCutScene: CheckCutScene?
     @State private var firstCaptureCutScene: FirstCaptureCutScene?
+    @State private var queenDownCutScene: QueenDownCutScene?
+    /// Every cut scene that fired this game, in order, for the reel.
+    @State private var cutSceneLog: [CutSceneEvent] = []
+    @State private var isReelPresented = false
     @StateObject private var replay = ReplayPlayer()
 
     var body: some View {
@@ -58,20 +62,63 @@ struct ContentView: View {
                 }
             }
         }
+        .overlay {
+            if let queenDownCutScene {
+                QueenDownCutSceneView(
+                    capture: queenDownCutScene.capture,
+                    moveNumber: queenDownCutScene.moveNumber
+                ) {
+                    dismissQueenDownCutScene()
+                }
+                .transition(.opacity)
+                .zIndex(102)
+                .task(id: queenDownCutScene.id) {
+                    try? await Task.sleep(for: .seconds(3.6))
+                    guard !Task.isCancelled else { return }
+                    dismissQueenDownCutScene()
+                }
+            }
+        }
+        .overlay {
+            if isReelPresented, !cutSceneLog.isEmpty {
+                CutSceneReelView(events: cutSceneLog) {
+                    withAnimation(.easeOut(duration: 0.26)) {
+                        isReelPresented = false
+                    }
+                }
+                .transition(.opacity)
+                .zIndex(103)
+            }
+        }
         .sensoryFeedback(.warning, trigger: checkCutScene?.id)
         .sensoryFeedback(.impact(weight: .heavy), trigger: firstCaptureCutScene?.id)
+        .sensoryFeedback(.impact(weight: .heavy, intensity: 1), trigger: queenDownCutScene?.id)
         .onChange(of: game.captureCount) { _, newCount in
-            guard newCount == 1, let capture = game.lastCapture else { return }
-            presentFirstCaptureCutScene(for: capture)
+            guard newCount > 0, let capture = game.lastCapture else { return }
+
+            // A queen outranks first blood, including when she *is* first blood.
+            if capture.piece.kind == .queen {
+                presentQueenDownCutScene(for: capture)
+            } else if newCount == 1 {
+                presentFirstCaptureCutScene(for: capture)
+            }
         }
         .onChange(of: game.status) { _, newStatus in
             switch newStatus {
             case .check(let checkedPlayer):
+                record(.check(checkedPlayer))
                 presentCheckCutScene(for: checkedPlayer)
             case .checkmate(let winner):
+                record(.checkmate(winner: winner))
                 presentCheckCutScene(for: winner.opponent)
             case .playing, .stalemate:
                 break
+            }
+        }
+        .onChange(of: game.plies.count) { _, newCount in
+            // A restart or a preset load empties the history; the reel goes too.
+            if newCount == 0 {
+                cutSceneLog.removeAll()
             }
         }
     }
@@ -85,7 +132,15 @@ struct ContentView: View {
         )
     }
 
+    private func record(_ kind: CutSceneEvent.Kind) {
+        cutSceneLog.append(
+            CutSceneEvent(kind: kind, moveNumber: max(1, (game.plies.count + 1) / 2))
+        )
+    }
+
     private func presentFirstCaptureCutScene(for capture: Capture) {
+        record(.firstBlood(capture))
+
         withAnimation(.snappy(duration: 0.16)) {
             // A capture that also gives check gets one scene, not two.
             checkCutScene = nil
@@ -99,8 +154,27 @@ struct ContentView: View {
         }
     }
 
+    private func presentQueenDownCutScene(for capture: Capture) {
+        record(.queenDown(capture))
+
+        withAnimation(.snappy(duration: 0.16)) {
+            checkCutScene = nil
+            firstCaptureCutScene = nil
+            queenDownCutScene = QueenDownCutScene(
+                capture: capture,
+                moveNumber: (game.plies.count + 1) / 2
+            )
+        }
+    }
+
+    private func dismissQueenDownCutScene() {
+        withAnimation(.easeOut(duration: 0.26)) {
+            queenDownCutScene = nil
+        }
+    }
+
     private func presentCheckCutScene(for checkedPlayer: Player) {
-        guard firstCaptureCutScene == nil else { return }
+        guard firstCaptureCutScene == nil, queenDownCutScene == nil else { return }
 
         withAnimation(.snappy(duration: 0.18)) {
             checkCutScene = CheckCutScene(checkedPlayer: checkedPlayer)
@@ -130,7 +204,11 @@ struct ContentView: View {
             .frame(maxWidth: 1100)
             .shadow(color: .black.opacity(0.42), radius: 18, y: 8)
         case .twoD:
-            ChessBoardView(game: game, threatDisplayMode: threatDisplayMode)
+            ChessBoardView(
+                game: game,
+                threatDisplayMode: threatDisplayMode,
+                piecePalette: piecePalette
+            )
                 .aspectRatio(1, contentMode: .fit)
                 .frame(maxWidth: 720, maxHeight: 720)
                 .shadow(color: .black.opacity(0.2), radius: 18, y: 8)
@@ -176,6 +254,19 @@ struct ContentView: View {
                 Menu {
                     Section("Candidates") {
                         candidateActions
+                    }
+                    // Picking candidates only decides what pulses.
+                    .disabled(!game.isPulseEnabled)
+
+                    Section {
+                        Button {
+                            game.setPulse(enabled: !game.isPulseEnabled)
+                        } label: {
+                            Label(
+                                game.isPulseEnabled ? "Turn off pulsing" : "Turn on pulsing",
+                                systemImage: game.isPulseEnabled ? "circle.slash" : "circle.dotted"
+                            )
+                        }
                     }
                 } label: {
                     controlIcon(
@@ -229,6 +320,18 @@ struct ContentView: View {
                     }
                     .disabled(game.plies.count <= 1)
                 }
+
+                Section {
+                    Button {
+                        isReelPresented = true
+                    } label: {
+                        Label(
+                            "Cut scene reel (\(cutSceneLog.count))",
+                            systemImage: "film.stack"
+                        )
+                    }
+                    .disabled(cutSceneLog.isEmpty)
+                }
             } label: {
                 controlIcon(
                     "play.rectangle",
@@ -236,7 +339,7 @@ struct ContentView: View {
                     isActive: replay.isPlaying
                 )
             }
-            .disabled(game.plies.isEmpty)
+            .disabled(game.plies.isEmpty && cutSceneLog.isEmpty)
             .accessibilityLabel("Replay")
         }
         .padding(.horizontal, 14)
@@ -367,6 +470,12 @@ private struct CheckCutScene: Identifiable, Equatable {
 private struct FirstCaptureCutScene: Identifiable, Equatable {
     let id = UUID()
     let capture: Capture
+}
+
+private struct QueenDownCutScene: Identifiable, Equatable {
+    let id = UUID()
+    let capture: Capture
+    let moveNumber: Int
 }
 
 private enum BoardDimension: String, CaseIterable, Identifiable {
@@ -589,6 +698,7 @@ private struct BoardOpacityKnob: View {
 private struct ChessBoardView: View {
     @ObservedObject var game: ChessGame
     let threatDisplayMode: ThreatDisplayMode
+    let piecePalette: PiecePalette
 
     var body: some View {
         let visibleCorridors = game.threatCorridors(for: threatDisplayMode)
@@ -606,8 +716,9 @@ private struct ChessBoardView: View {
                             isLastMove: game.lastMove?.from == square || game.lastMove?.to == square,
                             isCheckedKing: game.isKingInCheck(at: square),
                             isCandidate: game.candidatePulseSquares.contains(square),
+                            piecePalette: piecePalette,
                             threatCorridors: visibleCorridors.filter {
-                                $0.threatenedSquares.contains(square)
+                                marksThreatenedPiece($0, at: square)
                             }
                         ) {
                             game.tap(square)
@@ -624,6 +735,18 @@ private struct ChessBoardView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Chess board")
     }
+
+    /// Enemy-contact corridors have a concrete endpoint; the optional broad
+    /// threat map does not. Both presentations mark a piece, never open path.
+    private func marksThreatenedPiece(_ corridor: ThreatCorridor, at square: Square) -> Bool {
+        guard game.piece(at: square)?.player == corridor.piece.player.opponent else {
+            return false
+        }
+
+        return corridor.endpoint == square || (
+            corridor.endpoint == nil && corridor.threatenedSquares.contains(square)
+        )
+    }
 }
 
 private struct ChessSquareView: View {
@@ -634,6 +757,7 @@ private struct ChessSquareView: View {
     let isLastMove: Bool
     let isCheckedKing: Bool
     let isCandidate: Bool
+    let piecePalette: PiecePalette
     let threatCorridors: [ThreatCorridor]
     let action: () -> Void
 
@@ -668,12 +792,17 @@ private struct ChessSquareView: View {
                 }
 
                 if let piece {
-                    Text(piece.symbol)
-                        .font(.system(size: 54, weight: .regular, design: .serif))
-                        .minimumScaleFactor(0.4)
-                        .foregroundStyle(piece.player == .white ? Color.white : Color.black)
-                        .shadow(color: piece.player == .white ? .black.opacity(0.65) : .white.opacity(0.38), radius: 1, y: 1)
-                        .padding(4)
+                    if piece.kind == .pawn {
+                        FlatPawnView(piece: piece, palette: piecePalette)
+                            .padding(5)
+                    } else {
+                        Text(piece.symbol)
+                            .font(.system(size: 54, weight: .regular, design: .serif))
+                            .minimumScaleFactor(0.4)
+                            .foregroundStyle(Color(uiColor: piecePalette.colors(for: piece.player).piece))
+                            .shadow(color: pieceShadowColor(for: piece.player), radius: 1, y: 1)
+                            .padding(4)
+                    }
                 }
 
                 if isLegalTarget {
@@ -701,6 +830,10 @@ private struct ChessSquareView: View {
             : Color(red: 0.84, green: 0.79, blue: 0.67)
     }
 
+    private func pieceShadowColor(for player: Player) -> Color {
+        player == .white ? .black.opacity(0.68) : .white.opacity(0.42)
+    }
+
     private var accessibilityText: String {
         let contents: String
         if let piece {
@@ -716,6 +849,64 @@ private struct ChessSquareView: View {
 
     private var accessibilityHint: String {
         return isLegalTarget ? "Moves the selected piece here" : "Selects this square"
+    }
+}
+
+/// A deliberately simple pawn that shares the 3D renderer's round head,
+/// tapered body, and contrasting collar instead of falling back to a font glyph.
+private struct FlatPawnView: View {
+    let piece: Piece
+    let palette: PiecePalette
+
+    private var colors: (piece: UIColor, accent: UIColor) {
+        palette.colors(for: piece.player)
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let size = min(geometry.size.width, geometry.size.height)
+
+            ZStack {
+                Capsule()
+                    .fill(Color(uiColor: colors.piece))
+                    .frame(width: size * 0.66, height: size * 0.17)
+                    .offset(y: size * 0.29)
+
+                PawnTaper()
+                    .fill(Color(uiColor: colors.piece))
+                    .frame(width: size * 0.42, height: size * 0.44)
+                    .offset(y: size * 0.07)
+
+                Capsule()
+                    .fill(Color(uiColor: colors.accent))
+                    .frame(width: size * 0.47, height: size * 0.09)
+                    .offset(y: size * 0.23)
+
+                Circle()
+                    .fill(Color(uiColor: colors.piece))
+                    .frame(width: size * 0.31, height: size * 0.31)
+                    .offset(y: -size * 0.25)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .shadow(
+                color: piece.player == .white ? .black.opacity(0.62) : .white.opacity(0.4),
+                radius: 1,
+                y: 1
+            )
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct PawnTaper: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
     }
 }
 

@@ -482,7 +482,7 @@ private enum RealityBoardScene {
                 boardSurface.addChild(squareRoot)
 
                 let corridors = visibleCorridors.filter {
-                    $0.threatenedSquares.contains(square)
+                    marksThreatenedPiece($0, at: square, on: game)
                 }
                 if !corridors.isEmpty {
                     let marker = makeThreatMarker(corridors: corridors)
@@ -535,6 +535,22 @@ private enum RealityBoardScene {
                 }
             }
         }
+    }
+
+    /// A broad threat map has no endpoint, so pair its attack squares with the
+    /// live board. In both modes, empty path squares never receive a marker.
+    private static func marksThreatenedPiece(
+        _ corridor: ThreatCorridor,
+        at square: Square,
+        on game: ChessGame
+    ) -> Bool {
+        guard game.piece(at: square)?.player == corridor.piece.player.opponent else {
+            return false
+        }
+
+        return corridor.endpoint == square || (
+            corridor.endpoint == nil && corridor.threatenedSquares.contains(square)
+        )
     }
 
     static func square(from entity: Entity) -> Square? {

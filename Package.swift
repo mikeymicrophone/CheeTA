@@ -20,7 +20,10 @@ let package = Package(
                 "CheeTAApp.swift",
                 "CheckCutSceneView.swift",
                 "ContentView.swift",
+                "CutSceneReel.swift",
+                "CutSceneStyle.swift",
                 "FirstCaptureCutSceneView.swift",
+                "QueenDownCutSceneView.swift",
                 "RealityChessBoardView.swift",
                 "ReplayControls.swift"
             ],

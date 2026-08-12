@@ -19,6 +19,8 @@ final class ChessGame: ObservableObject {
     @Published private(set) var plies: [RecordedPly]
     /// While true the published board is a replay frame, not the live game.
     @Published private(set) var isReplaying: Bool
+    /// A display preference, so it survives restarts and preset loads.
+    @Published private(set) var isPulseEnabled: Bool
 
     private var openingBoard: [Square: Piece]
     private var openingPlayer: Player
@@ -51,6 +53,7 @@ final class ChessGame: ObservableObject {
         self.isChoosingCandidates = false
         self.plies = []
         self.isReplaying = false
+        self.isPulseEnabled = true
         self.openingBoard = board
         self.openingPlayer = currentPlayer
         refreshStatus()
@@ -72,7 +75,7 @@ final class ChessGame: ObservableObject {
     /// The current player's movable pieces pulse until the player taps one.
     /// Once a manual set exists, only those chosen candidates pulse.
     var candidatePulseSquares: Set<Square> {
-        guard !status.isFinished else { return [] }
+        guard isPulseEnabled, !status.isFinished else { return [] }
         let movable = movableSquares(for: currentPlayer)
         let chosen = candidateSquares.intersection(movable)
         return chosen.isEmpty ? movable : chosen
@@ -208,6 +211,17 @@ final class ChessGame: ObservableObject {
     func clearCandidates() {
         candidateSquares = []
         isChoosingCandidates = false
+    }
+
+    /// Turning the pulse off leaves any chosen candidates alone, so flipping
+    /// it back on restores the selection rather than starting over.
+    func setPulse(enabled: Bool) {
+        guard enabled != isPulseEnabled else { return }
+
+        isPulseEnabled = enabled
+        if !enabled {
+            isChoosingCandidates = false
+        }
     }
 
     func beginChoosingCandidates() {

@@ -323,6 +323,37 @@ final class ChessGameTests: XCTestCase {
         XCTAssertEqual(game.threatCorridors.count, game.board.count)
     }
 
+    func testTurningThePulseOffSilencesItAndSurvivesARestart() {
+        let game = ChessGame()
+
+        XCTAssertFalse(game.candidatePulseSquares.isEmpty)
+
+        game.setPulse(enabled: false)
+        XCTAssertTrue(game.candidatePulseSquares.isEmpty)
+
+        // A display preference, not game state: a restart must not undo it.
+        game.reset()
+        XCTAssertFalse(game.isPulseEnabled)
+        XCTAssertTrue(game.candidatePulseSquares.isEmpty)
+
+        game.setPulse(enabled: true)
+        XCTAssertFalse(game.candidatePulseSquares.isEmpty)
+    }
+
+    func testTurningThePulseOffKeepsChosenCandidatesForLater() {
+        let game = ChessGame()
+        game.beginChoosingCandidates()
+        game.tap(Square("e2")!)
+
+        game.setPulse(enabled: false)
+
+        XCTAssertFalse(game.isChoosingCandidates)
+        XCTAssertEqual(game.candidateSquares, [Square("e2")!])
+
+        game.setPulse(enabled: true)
+        XCTAssertEqual(game.candidatePulseSquares, [Square("e2")!])
+    }
+
     func testCaptureRecordsVictimCaptorAndSquare() {
         let game = ChessGame(
             board: makeBoard([
