@@ -4,30 +4,20 @@ struct ContentView: View {
     @StateObject private var game = ChessGame()
     @State private var threatDisplayMode: ThreatDisplayMode = .enemyContact
     @State private var boardDimension: BoardDimension = .threeD
+    @State private var boardOpacity = 1.0
+    @State private var piecePalette: PiecePalette = .arcade
+    @State private var isLightLoose = false
+    @State private var isSceneControlsPresented = false
     @State private var checkCutScene: CheckCutScene?
 
     var body: some View {
-        GeometryReader { geometry in
-            let isWide = geometry.size.width > geometry.size.height
-
-            Group {
-                if isWide {
-                    HStack(spacing: 28) {
-                        board
-                        gamePanel
-                            .frame(width: min(310, geometry.size.width * 0.3))
-                    }
-                } else {
-                    VStack(spacing: 22) {
-                        board
-                        gamePanel
-                    }
-                }
-            }
-            .padding(24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(.systemBackground))
+        VStack(spacing: 20) {
+            board
+            controlBar
         }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground))
         .overlay {
             if let checkCutScene {
                 CheckCutSceneView(checkedPlayer: checkCutScene.checkedPlayer) {
@@ -67,56 +57,132 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
     private var board: some View {
-        Group {
-            switch boardDimension {
-            case .threeD:
-                RealityChessBoardView(game: game, threatDisplayMode: threatDisplayMode)
-            case .twoD:
-                ChessBoardView(game: game, threatDisplayMode: threatDisplayMode)
-            }
+        switch boardDimension {
+        case .threeD:
+            // A wide frame: the 3D scene is a set, not a board, and the light
+            // needs somewhere to fly.
+            RealityChessBoardView(
+                game: game,
+                threatDisplayMode: threatDisplayMode,
+                boardOpacity: Float(boardOpacity),
+                piecePalette: piecePalette,
+                isLightLoose: isLightLoose
+            )
+            .aspectRatio(16.0 / 10.0, contentMode: .fit)
+            .frame(maxWidth: 1100)
+            .shadow(color: .black.opacity(0.42), radius: 18, y: 8)
+        case .twoD:
+            ChessBoardView(game: game, threatDisplayMode: threatDisplayMode)
+                .aspectRatio(1, contentMode: .fit)
+                .frame(maxWidth: 720, maxHeight: 720)
+                .shadow(color: .black.opacity(0.2), radius: 18, y: 8)
         }
-        .aspectRatio(1, contentMode: .fit)
-        .frame(maxWidth: 720, maxHeight: 720)
-        .shadow(color: .black.opacity(boardDimension == .threeD ? 0.42 : 0.2), radius: 18, y: 8)
     }
 
-    private var gamePanel: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("CheeTA")
-                    .font(.system(size: 42, weight: .black, design: .rounded))
-                Text("Local chess")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
+    /// Every control collapses to one icon. Pick-one settings live in menus;
+    /// the scene group needs a popover because a knob cannot live in a menu.
+    private var controlBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                isSceneControlsPresented = true
+            } label: {
+                controlIcon(boardDimension.systemImage, isActive: isSceneControlsPresented)
+            }
+            .accessibilityLabel("Scene")
+            .accessibilityHint("Board dimension, opacity, piece colors, and the light")
+            .popover(isPresented: $isSceneControlsPresented) {
+                sceneControls
+                    .frame(idealWidth: 340)
+                    .presentationCompactAdaptation(.popover)
             }
 
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(game.currentPlayer == .white ? .white : .black)
-                    .stroke(.secondary, lineWidth: 1)
-                    .frame(width: 18, height: 18)
-                Text(game.statusText)
-                    .font(.title3.weight(.semibold))
+            Menu {
+                Section("Threat display") {
+                    Picker("Threat display", selection: $threatDisplayMode) {
+                        ForEach(ThreatDisplayMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                }
+                Text("Enemy Contact shows only corridors that end on an opposing piece. Border weight still shows stacking.")
+            } label: {
+                controlIcon(
+                    "shield.lefthalf.filled",
+                    tint: .teal,
+                    isActive: threatDisplayMode == .allThreats
+                )
             }
+            .accessibilityLabel("Threats")
 
             if !game.status.isFinished {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Label("Candidates", systemImage: "sparkles")
-                            .font(.headline)
-                        Spacer()
+                Menu {
+                    Section("Candidates") {
                         candidateActions
                     }
-
-                    Text(candidateGuidance)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                } label: {
+                    controlIcon(
+                        "sparkles",
+                        tint: .orange,
+                        isActive: game.isChoosingCandidates || !game.candidateSquares.isEmpty
+                    )
                 }
-                .padding(12)
-                .background(Color.orange.opacity(0.11), in: RoundedRectangle(cornerRadius: 14))
+                .accessibilityLabel("Candidates")
             }
 
+            Menu {
+                Section("Jump to a position") {
+                    ForEach(PositionPreset.allCases) { preset in
+                        Button {
+                            game.load(preset)
+                        } label: {
+                            Label(
+                                preset.displayName,
+                                systemImage: game.positionPreset == preset
+                                    ? "checkmark"
+                                    : preset.systemImage
+                            )
+                        }
+                    }
+                }
+                Section {
+                    Button(role: .destructive) {
+                        game.reset()
+                    } label: {
+                        Label("Restart game", systemImage: "arrow.counterclockwise")
+                    }
+                }
+            } label: {
+                controlIcon("flag.checkered", tint: .blue)
+            }
+            .accessibilityLabel("Positions")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+    }
+
+    private func controlIcon(
+        _ systemImage: String,
+        tint: Color = .indigo,
+        isActive: Bool = false
+    ) -> some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 19, weight: .semibold))
+            .foregroundStyle(isActive ? AnyShapeStyle(.white) : AnyShapeStyle(tint))
+            .frame(width: 46, height: 46)
+            .background {
+                Circle()
+                    .fill(isActive ? AnyShapeStyle(tint.gradient) : AnyShapeStyle(tint.opacity(0.14)))
+            }
+            .contentShape(Circle())
+            .animation(.snappy(duration: 0.2), value: isActive)
+    }
+
+    private var sceneControls: some View {
+        VStack(alignment: .leading, spacing: 16) {
             Picker("Board dimension", selection: $boardDimension) {
                 ForEach(BoardDimension.allCases) { dimension in
                     Label(dimension.displayName, systemImage: dimension.systemImage)
@@ -127,101 +193,86 @@ struct ContentView: View {
             .accessibilityHint("Switches between the 3D and classic board renderers")
 
             if boardDimension == .threeD {
-                Label("Drag to orbit or elevate. Pinch to zoom. Tap squares to play.", systemImage: "rotate.3d")
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(.secondary)
+                boardAppearanceControls
+            }
+        }
+        .padding(20)
+    }
+
+    private var boardAppearanceControls: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 16) {
+                BoardOpacityKnob(value: $boardOpacity)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Board opacity", systemImage: "square.opacity")
+                        .font(.headline)
+                    Text(boardOpacityHint)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
             }
 
-            Text("Enemy Contact shows only directional corridors that end on an opposing piece. Border weight still shows stacking.")
-                .foregroundStyle(.secondary)
-
-            Picker("Threat display", selection: $threatDisplayMode) {
-                ForEach(ThreatDisplayMode.allCases) { mode in
-                    Text(mode.displayName).tag(mode)
+            Picker("Piece palette", selection: $piecePalette) {
+                ForEach(PiecePalette.allCases) { palette in
+                    Text(palette.displayName).tag(palette)
                 }
             }
             .pickerStyle(.segmented)
-            .accessibilityHint("Switches between enemy-contact corridors and the complete threat map")
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Jump to a position")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-
-                HStack(spacing: 8) {
-                    ForEach(PositionPreset.allCases) { preset in
-                        Button {
-                            game.load(preset)
-                        } label: {
-                            Label(preset.displayName, systemImage: preset.systemImage)
-                                .labelStyle(.titleAndIcon)
-                                .font(.subheadline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(game.positionPreset == preset ? .blue : .secondary)
-                        .accessibilityHint("Loads a realistic \(preset.displayName.lowercased()) position")
-                    }
-                }
-            }
-
-            Spacer(minLength: 8)
+            .accessibilityHint("Changes the colors of both sides' 3D pieces")
 
             Button {
-                game.reset()
+                isLightLoose.toggle()
             } label: {
-                Label("Restart game", systemImage: "arrow.counterclockwise")
-                    .frame(maxWidth: .infinity)
+                Label(
+                    isLightLoose ? "Catch the light" : "Loose the light",
+                    systemImage: isLightLoose ? "lightbulb.slash.fill" : "lightbulb.max.fill"
+                )
+                .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-
-            Text("Basic rules: no castling, en passant, or promotion yet.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            .tint(isLightLoose ? .pink : .indigo)
+            .sensoryFeedback(.impact, trigger: isLightLoose)
+            .accessibilityHint(
+                isLightLoose
+                    ? "Returns the light to a fixed position above the board"
+                    : "Sends the light careening around the board"
+            )
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: isCompactHeight ? nil : 620, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
-    private var isCompactHeight: Bool {
-        UIScreen.main.bounds.height < 700
-    }
-
-    private var candidateGuidance: String {
-        if game.isChoosingCandidates {
-            if game.candidateSquares.isEmpty {
-                return "Candidate picking is on. Tap the pieces you want to keep pulsing."
-            }
-            let noun = game.candidateSquares.count == 1 ? "piece" : "pieces"
-            return "Choosing candidates: \(game.candidateSquares.count) \(noun) will pulse."
+    private var boardOpacityHint: String {
+        if boardOpacity < 0.005 {
+            return "Board hidden — pieces float in space. Squares are still tappable. Tap the hub to bring it back."
         }
-        if game.candidateSquares.isEmpty {
-            return "All \(game.candidatePulseSquares.count) \(game.currentPlayer.displayName.lowercased()) pieces with a legal move are pulsing."
-        }
-        let noun = game.candidateSquares.count == 1 ? "piece" : "pieces"
-        return "\(game.candidateSquares.count) candidate \(noun) selected."
+        return "Twist the dial to fade the board. Tap the hub to hide it entirely."
     }
 
     @ViewBuilder
     private var candidateActions: some View {
         if game.isChoosingCandidates {
-            Button("Done") {
+            Button {
                 game.finishChoosingCandidates()
+            } label: {
+                Label("Done choosing", systemImage: "checkmark.circle")
             }
-            .font(.subheadline.weight(.semibold))
-        } else if game.candidateSquares.isEmpty {
-            Button("Choose") {
-                game.beginChoosingCandidates()
-            }
-            .font(.subheadline.weight(.semibold))
         } else {
-            Button("Pulse all") {
-                game.clearCandidates()
+            Button {
+                game.beginChoosingCandidates()
+            } label: {
+                Label("Choose candidates", systemImage: "hand.tap")
             }
-            .font(.subheadline.weight(.semibold))
+
+            if !game.candidateSquares.isEmpty {
+                Button {
+                    game.clearCandidates()
+                } label: {
+                    Label("Pulse all pieces", systemImage: "sparkles")
+                }
+            }
         }
     }
 
@@ -250,6 +301,202 @@ private enum BoardDimension: String, CaseIterable, Identifiable {
         case .threeD: "cube"
         case .twoD: "square.grid.3x3"
         }
+    }
+}
+
+/// Rotary control for board opacity. The value runs the full 0...1 range, and
+/// the dial is driven by relative rotation so the pointer never jumps to the
+/// finger or wraps through the gap at the bottom of the arc.
+private struct BoardOpacityKnob: View {
+    @Binding var value: Double
+
+    var size: CGFloat = 104
+
+    /// Degrees of travel, centered on 12 o'clock: -135° (off) to +135° (full).
+    private let sweep: Double = 270
+    private let trackWidth: CGFloat = 9
+
+    @State private var lastAngle: Double?
+    @State private var isDragging = false
+    @State private var restoreValue: Double = 1
+
+    var body: some View {
+        ZStack {
+            tickMarks
+
+            Circle()
+                .trim(from: 0, to: 0.75)
+                .rotation(.degrees(135))
+                .stroke(
+                    Color.primary.opacity(0.14),
+                    style: StrokeStyle(lineWidth: trackWidth, lineCap: .round)
+                )
+                .padding(trackWidth)
+
+            Circle()
+                .trim(from: 0, to: 0.75 * value)
+                .rotation(.degrees(135))
+                .stroke(
+                    AngularGradient(
+                        colors: [.indigo, .blue, .cyan, .mint],
+                        center: .center,
+                        startAngle: .degrees(135),
+                        endAngle: .degrees(405)
+                    ),
+                    style: StrokeStyle(lineWidth: trackWidth, lineCap: .round)
+                )
+                .padding(trackWidth)
+                .shadow(color: .cyan.opacity(0.55 * value), radius: 7)
+
+            knobBody
+
+            pointer
+
+            readout
+        }
+        .frame(width: size, height: size)
+        .scaleEffect(isDragging ? 1.05 : 1)
+        .animation(.spring(response: 0.28, dampingFraction: 0.7), value: isDragging)
+        .contentShape(Circle())
+        .gesture(rotation)
+        .sensoryFeedback(.selection, trigger: Int((value * 20).rounded()))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Board opacity")
+        .accessibilityValue("\(Int((value * 100).rounded())) percent")
+        .accessibilityHint("Adjust to fade the 3D board in and out.")
+        .accessibilityAction(named: value > 0 ? "Hide board" : "Show board") {
+            toggleOff()
+        }
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: value = min(1, value + 0.05)
+            case .decrement: value = max(0, value - 0.05)
+            @unknown default: break
+            }
+        }
+    }
+
+    private var knobBody: some View {
+        Circle()
+            .fill(
+                RadialGradient(
+                    colors: [
+                        Color(red: 0.20, green: 0.22, blue: 0.28),
+                        Color(red: 0.08, green: 0.09, blue: 0.12)
+                    ],
+                    center: .init(x: 0.35, y: 0.28),
+                    startRadius: 1,
+                    endRadius: size * 0.55
+                )
+            )
+            .overlay {
+                Circle()
+                    .stroke(
+                        LinearGradient(
+                            colors: [.white.opacity(0.35), .white.opacity(0.04)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            }
+            .shadow(color: .black.opacity(0.45), radius: 6, y: 3)
+            .padding(trackWidth * 2.5)
+    }
+
+    private var pointer: some View {
+        VStack(spacing: 0) {
+            Capsule()
+                .fill(value > 0 ? Color.cyan : Color.white.opacity(0.45))
+                .frame(width: 3, height: size * 0.13)
+                .shadow(color: .cyan.opacity(value > 0 ? 0.9 : 0), radius: 4)
+            Spacer(minLength: 0)
+        }
+        .padding(trackWidth * 3.1)
+        .frame(width: size, height: size)
+        .rotationEffect(.degrees(pointerAngle))
+    }
+
+    private var readout: some View {
+        VStack(spacing: 0) {
+            if value < 0.005 {
+                Text("OFF")
+                    .font(.system(size: size * 0.17, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.55))
+            } else {
+                Text("\(Int((value * 100).rounded()))")
+                    .font(.system(size: size * 0.24, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.white)
+                Text("%")
+                    .font(.system(size: size * 0.11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+        }
+        .fixedSize()
+        .frame(width: size * 0.3, height: size * 0.3)
+        .contentShape(Circle())
+        // The hub is the dead zone of the rotation gesture, so a tap here is
+        // unambiguous: it mutes the board and restores the previous setting.
+        .onTapGesture { toggleOff() }
+    }
+
+    private func toggleOff() {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+            if value > 0 {
+                restoreValue = value
+                value = 0
+            } else {
+                value = restoreValue > 0 ? restoreValue : 1
+            }
+        }
+    }
+
+    private var tickMarks: some View {
+        ForEach(0..<19) { index in
+            let fraction = Double(index) / 18
+            Capsule()
+                .fill(
+                    fraction <= value + 0.0001
+                        ? Color.cyan.opacity(0.9)
+                        : Color.primary.opacity(0.22)
+                )
+                .frame(width: 1.6, height: index.isMultiple(of: 6) ? 7 : 4)
+                .frame(width: size, height: size, alignment: .top)
+                .rotationEffect(.degrees(-sweep / 2 + sweep * fraction))
+        }
+        .allowsHitTesting(false)
+    }
+
+    private var pointerAngle: Double {
+        -sweep / 2 + sweep * value
+    }
+
+    private var rotation: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { drag in
+                isDragging = true
+
+                let dx = drag.location.x - size / 2
+                let dy = drag.location.y - size / 2
+                // Ignore the dead zone at the hub, where angles are unstable.
+                guard dx * dx + dy * dy > pow(size * 0.15, 2) else { return }
+
+                // Degrees clockwise from 12 o'clock, in -180...180.
+                let angle = atan2(dx, -dy) * 180 / .pi
+                defer { lastAngle = angle }
+
+                guard let previous = lastAngle else { return }
+                var delta = angle - previous
+                if delta > 180 { delta -= 360 }
+                if delta < -180 { delta += 360 }
+
+                let updated = value + delta / sweep
+                value = (min(1, max(0, updated)) * 100).rounded() / 100
+            }
+            .onEnded { _ in
+                lastAngle = nil
+                isDragging = false
+            }
     }
 }
 
