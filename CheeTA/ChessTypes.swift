@@ -13,7 +13,7 @@ enum Player: String, CaseIterable, Sendable {
     }
 }
 
-enum PieceKind: String, CaseIterable, Sendable {
+enum PieceKind: String, CaseIterable, Hashable, Sendable {
     case king
     case queen
     case rook
@@ -101,6 +101,80 @@ struct ReplayFrame: Hashable, Sendable {
 struct ChessMove: Hashable, Sendable {
     let from: Square
     let to: Square
+    /// Non-nil only when a pawn reaches the far rank and changes identity.
+    let promotion: PieceKind?
+
+    init(from: Square, to: Square, promotion: PieceKind? = nil) {
+        self.from = from
+        self.to = to
+        self.promotion = promotion
+    }
+}
+
+enum CastlingSide: CaseIterable, Sendable {
+    case kingSide
+    case queenSide
+}
+
+/// Castling is determined by history, not merely by where the pieces happen to
+/// stand. Positions loaded without history begin with no castling rights.
+struct CastlingRights: Hashable, Sendable {
+    var whiteKingSide: Bool
+    var whiteQueenSide: Bool
+    var blackKingSide: Bool
+    var blackQueenSide: Bool
+
+    static let standard = CastlingRights(
+        whiteKingSide: true,
+        whiteQueenSide: true,
+        blackKingSide: true,
+        blackQueenSide: true
+    )
+    static let none = CastlingRights(
+        whiteKingSide: false,
+        whiteQueenSide: false,
+        blackKingSide: false,
+        blackQueenSide: false
+    )
+
+    func allows(_ player: Player, side: CastlingSide) -> Bool {
+        switch (player, side) {
+        case (.white, .kingSide): whiteKingSide
+        case (.white, .queenSide): whiteQueenSide
+        case (.black, .kingSide): blackKingSide
+        case (.black, .queenSide): blackQueenSide
+        }
+    }
+
+    mutating func revokeAll(for player: Player) {
+        switch player {
+        case .white:
+            whiteKingSide = false
+            whiteQueenSide = false
+        case .black:
+            blackKingSide = false
+            blackQueenSide = false
+        }
+    }
+
+    mutating func revoke(_ player: Player, side: CastlingSide) {
+        switch (player, side) {
+        case (.white, .kingSide): whiteKingSide = false
+        case (.white, .queenSide): whiteQueenSide = false
+        case (.black, .kingSide): blackKingSide = false
+        case (.black, .queenSide): blackQueenSide = false
+        }
+    }
+}
+
+/// A pawn has reached the far rank. The game stays on the same turn until the
+/// player chooses which eligible piece replaces it.
+struct PendingPromotion: Hashable, Sendable {
+    let from: Square
+    let to: Square
+    let pawn: Piece
+
+    static let choices: [PieceKind] = [.queen, .rook, .bishop, .knight]
 }
 
 /// A semantic description of one piece's passive threat projection.

@@ -475,6 +475,105 @@ final class ChessGameTests: XCTestCase {
         XCTAssertTrue(ChessGame().replayFrames().isEmpty)
     }
 
+    func testKingSideCastlingMovesTheRookAndRevokesRights() {
+        let game = ChessGame(
+            board: makeBoard([
+                ("e1", .king, .white), ("h1", .rook, .white),
+                ("a8", .king, .black)
+            ]),
+            castlingRights: CastlingRights(
+                whiteKingSide: true,
+                whiteQueenSide: false,
+                blackKingSide: false,
+                blackQueenSide: false
+            )
+        )
+
+        XCTAssertTrue(game.legalMoves(from: Square("e1")!).contains(Square("g1")!))
+
+        play("e1", "g1", in: game)
+
+        XCTAssertEqual(game.piece(at: Square("g1")!), Piece(kind: .king, player: .white))
+        XCTAssertEqual(game.piece(at: Square("f1")!), Piece(kind: .rook, player: .white))
+        XCTAssertNil(game.piece(at: Square("h1")!))
+        XCTAssertFalse(game.castlingRights.whiteKingSide)
+        XCTAssertFalse(game.castlingRights.whiteQueenSide)
+    }
+
+    func testCastlingCannotCrossAnAttackedSquare() {
+        let game = ChessGame(
+            board: makeBoard([
+                ("e1", .king, .white), ("h1", .rook, .white),
+                ("f8", .rook, .black), ("a8", .king, .black)
+            ]),
+            castlingRights: CastlingRights(
+                whiteKingSide: true,
+                whiteQueenSide: false,
+                blackKingSide: false,
+                blackQueenSide: false
+            )
+        )
+
+        XCTAssertFalse(game.legalMoves(from: Square("e1")!).contains(Square("g1")!))
+    }
+
+    func testMovingCornerRookRevokesThatSideOfCastling() {
+        let game = ChessGame(
+            board: makeBoard([
+                ("e1", .king, .white), ("h1", .rook, .white),
+                ("a8", .king, .black)
+            ]),
+            castlingRights: CastlingRights(
+                whiteKingSide: true,
+                whiteQueenSide: false,
+                blackKingSide: false,
+                blackQueenSide: false
+            )
+        )
+
+        play("h1", "h2", in: game)
+
+        XCTAssertFalse(game.castlingRights.whiteKingSide)
+    }
+
+    func testPromotionWaitsForAChoiceAndRecordsTheNewPiece() {
+        let game = ChessGame(
+            board: makeBoard([
+                ("e1", .king, .white), ("a7", .pawn, .white),
+                ("e8", .king, .black)
+            ])
+        )
+
+        play("a7", "a8", in: game)
+
+        XCTAssertEqual(game.pendingPromotion?.to, Square("a8")!)
+        XCTAssertEqual(game.piece(at: Square("a7")!), Piece(kind: .pawn, player: .white))
+        XCTAssertTrue(game.plies.isEmpty)
+
+        game.promote(to: .knight)
+
+        XCTAssertNil(game.pendingPromotion)
+        XCTAssertEqual(game.piece(at: Square("a8")!), Piece(kind: .knight, player: .white))
+        XCTAssertEqual(game.currentPlayer, .black)
+        XCTAssertEqual(game.plies.last?.move.promotion, .knight)
+    }
+
+    func testPromotionCaptureRecordsThePawnAsCaptor() {
+        let game = ChessGame(
+            board: makeBoard([
+                ("e1", .king, .white), ("b7", .pawn, .white),
+                ("a8", .rook, .black), ("e8", .king, .black)
+            ])
+        )
+
+        play("b7", "a8", in: game)
+        game.promote(to: .queen)
+
+        XCTAssertEqual(game.piece(at: Square("a8")!), Piece(kind: .queen, player: .white))
+        XCTAssertEqual(game.lastCapture?.piece, Piece(kind: .rook, player: .black))
+        XCTAssertEqual(game.lastCapture?.captor, Piece(kind: .pawn, player: .white))
+    }
+
     private func makeBoard(_ entries: [(String, PieceKind, Player)]) -> [Square: Piece] {
         Dictionary(uniqueKeysWithValues: entries.map { notation, kind, player in
             (Square(notation)!, Piece(kind: kind, player: player))

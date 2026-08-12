@@ -80,6 +80,17 @@ struct ContentView: View {
             }
         }
         .overlay {
+            if let promotion = game.pendingPromotion {
+                PromotionPicker(player: promotion.pawn.player) { kind in
+                    withAnimation(.snappy(duration: 0.18)) {
+                        game.promote(to: kind)
+                    }
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                .zIndex(103)
+            }
+        }
+        .overlay {
             if isReelPresented, !cutSceneLog.isEmpty {
                 CutSceneReelView(events: cutSceneLog) {
                     withAnimation(.easeOut(duration: 0.26)) {
@@ -87,7 +98,7 @@ struct ContentView: View {
                     }
                 }
                 .transition(.opacity)
-                .zIndex(103)
+                .zIndex(104)
             }
         }
         .sensoryFeedback(.warning, trigger: checkCutScene?.id)
@@ -400,13 +411,7 @@ struct ContentView: View {
                 Spacer(minLength: 0)
             }
 
-            Picker("Piece palette", selection: $piecePalette) {
-                ForEach(PiecePalette.allCases) { palette in
-                    Text(palette.displayName).tag(palette)
-                }
-            }
-            .pickerStyle(.segmented)
-            .accessibilityHint("Changes the colors of both sides' 3D pieces")
+            pieceColorControls
 
             Button {
                 isLightLoose.toggle()
@@ -426,6 +431,60 @@ struct ContentView: View {
                     : "Sends the light careening around the board"
             )
         }
+    }
+
+    /// Named palettes seed the four colors; the pickers take it from there.
+    private var pieceColorControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Piece colors", systemImage: "paintpalette")
+                .font(.headline)
+
+            HStack(spacing: 8) {
+                ForEach(PiecePalette.presets) { preset in
+                    Button {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            piecePalette = preset.palette
+                        }
+                    } label: {
+                        presetSwatch(preset)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(preset.name) palette")
+                }
+            }
+
+            VStack(spacing: 8) {
+                ColorPicker("White pieces", selection: $piecePalette.whitePiece, supportsOpacity: false)
+                ColorPicker("White accents", selection: $piecePalette.whiteAccent, supportsOpacity: false)
+                ColorPicker("Black pieces", selection: $piecePalette.blackPiece, supportsOpacity: false)
+                ColorPicker("Black accents", selection: $piecePalette.blackAccent, supportsOpacity: false)
+            }
+            .font(.subheadline)
+        }
+    }
+
+    private func presetSwatch(_ preset: PiecePalette.Preset) -> some View {
+        let isActive = piecePalette == preset.palette
+
+        return VStack(spacing: 5) {
+            HStack(spacing: 0) {
+                preset.palette.whitePiece
+                preset.palette.whiteAccent
+                preset.palette.blackAccent
+                preset.palette.blackPiece
+            }
+            .frame(height: 26)
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(isActive ? Color.accentColor : .primary.opacity(0.18), lineWidth: isActive ? 2.5 : 1)
+            }
+
+            Text(preset.name)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(isActive ? Color.accentColor : .secondary)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var boardOpacityHint: String {
@@ -907,6 +966,50 @@ private struct PawnTaper: Shape {
         path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
         path.closeSubpath()
         return path
+    }
+}
+
+private struct PromotionPicker: View {
+    let player: Player
+    let choose: (PieceKind) -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.5)
+                .ignoresSafeArea()
+
+            VStack(spacing: 18) {
+                Text("PROMOTION")
+                    .font(.system(size: 16, weight: .black, design: .rounded))
+                    .tracking(2)
+                    .foregroundStyle(.secondary)
+                Text("Who does this pawn become?")
+                    .font(.system(size: 28, weight: .heavy, design: .rounded))
+
+                HStack(spacing: 12) {
+                    ForEach(PendingPromotion.choices, id: \.self) { kind in
+                        Button {
+                            choose(kind)
+                        } label: {
+                            VStack(spacing: 8) {
+                                Text(Piece(kind: kind, player: player).symbol)
+                                    .font(.system(size: 48, weight: .regular, design: .serif))
+                                Text(kind.rawValue.capitalized)
+                                    .font(.caption.weight(.bold))
+                            }
+                            .frame(width: 88, height: 106)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(player == .white ? .cyan : .purple)
+                        .accessibilityLabel("Promote to \(kind.rawValue.capitalized)")
+                    }
+                }
+            }
+            .padding(26)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .shadow(color: .black.opacity(0.3), radius: 24, y: 12)
+            .padding(24)
+        }
     }
 }
 

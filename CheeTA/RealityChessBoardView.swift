@@ -135,55 +135,57 @@ struct RealityChessBoardView: View {
     }
 }
 
-enum PiecePalette: String, CaseIterable, Identifiable {
-    case arcade
-    case neon
-    case royal
-
-    var id: Self { self }
-
-    var displayName: String {
-        switch self {
-        case .arcade: "Arcade"
-        case .neon: "Neon"
-        case .royal: "Royal"
-        }
-    }
+/// Four freely editable colors — body and accent for each side. The named
+/// palettes are just starting points now, not the only choices.
+struct PiecePalette: Equatable {
+    var whitePiece: Color
+    var whiteAccent: Color
+    var blackPiece: Color
+    var blackAccent: Color
 
     func colors(for player: Player) -> (piece: UIColor, accent: UIColor) {
-        switch (self, player) {
-        case (.arcade, .white):
-            (
-                UIColor(red: 0.92, green: 0.88, blue: 0.75, alpha: 1),
-                UIColor(red: 0.56, green: 0.68, blue: 0.69, alpha: 1)
-            )
-        case (.arcade, .black):
-            (
-                UIColor(red: 0.055, green: 0.065, blue: 0.075, alpha: 1),
-                UIColor(red: 0.30, green: 0.17, blue: 0.38, alpha: 1)
-            )
-        case (.neon, .white):
-            (
-                UIColor(red: 0.44, green: 1.0, blue: 0.91, alpha: 1),
-                UIColor(red: 0.05, green: 0.72, blue: 1.0, alpha: 1)
-            )
-        case (.neon, .black):
-            (
-                UIColor(red: 0.16, green: 0.04, blue: 0.24, alpha: 1),
-                UIColor(red: 1.0, green: 0.14, blue: 0.56, alpha: 1)
-            )
-        case (.royal, .white):
-            (
-                UIColor(red: 0.93, green: 0.70, blue: 0.19, alpha: 1),
-                UIColor(red: 1.0, green: 0.90, blue: 0.55, alpha: 1)
-            )
-        case (.royal, .black):
-            (
-                UIColor(red: 0.06, green: 0.12, blue: 0.34, alpha: 1),
-                UIColor(red: 0.70, green: 0.78, blue: 1.0, alpha: 1)
-            )
+        switch player {
+        case .white: (UIColor(whitePiece), UIColor(whiteAccent))
+        case .black: (UIColor(blackPiece), UIColor(blackAccent))
         }
     }
+
+    func pieceColor(for player: Player) -> Color {
+        player == .white ? whitePiece : blackPiece
+    }
+
+    struct Preset: Identifiable {
+        var id: String { name }
+        let name: String
+        let palette: PiecePalette
+    }
+
+    static let presets: [Preset] = [
+        Preset(name: "Arcade", palette: .arcade),
+        Preset(name: "Neon", palette: .neon),
+        Preset(name: "Royal", palette: .royal)
+    ]
+
+    static let arcade = PiecePalette(
+        whitePiece: Color(red: 0.92, green: 0.88, blue: 0.75),
+        whiteAccent: Color(red: 0.56, green: 0.68, blue: 0.69),
+        blackPiece: Color(red: 0.055, green: 0.065, blue: 0.075),
+        blackAccent: Color(red: 0.30, green: 0.17, blue: 0.38)
+    )
+
+    static let neon = PiecePalette(
+        whitePiece: Color(red: 0.44, green: 1.0, blue: 0.91),
+        whiteAccent: Color(red: 0.05, green: 0.72, blue: 1.0),
+        blackPiece: Color(red: 0.16, green: 0.04, blue: 0.24),
+        blackAccent: Color(red: 1.0, green: 0.14, blue: 0.56)
+    )
+
+    static let royal = PiecePalette(
+        whitePiece: Color(red: 0.93, green: 0.70, blue: 0.19),
+        whiteAccent: Color(red: 1.0, green: 0.90, blue: 0.55),
+        blackPiece: Color(red: 0.06, green: 0.12, blue: 0.34),
+        blackAccent: Color(red: 0.70, green: 0.78, blue: 1.0)
+    )
 }
 
 @MainActor
@@ -862,9 +864,26 @@ private enum RealityBoardScene {
         color: UIColor,
         to root: Entity
     ) {
-        let entity = model(mesh, color: color, metallic: true, roughness: 0.28)
+        let entity = ModelEntity(mesh: mesh, materials: [pieceMaterial(color: color)])
         entity.position = position
         root.addChild(entity)
+    }
+
+    /// Pieces get a lacquered finish rather than the board's flat one: tight
+    /// specular from the low roughness, plus a clearcoat gloss layer on top
+    /// that stays bright even when the base color is dark.
+    private static func pieceMaterial(color: UIColor) -> PhysicallyBasedMaterial {
+        var material = PhysicallyBasedMaterial()
+        material.baseColor = .init(tint: color)
+        // Metallic is kept moderate on purpose: pushed higher, the pieces
+        // reflect the room instead of showing their own color, which would
+        // quietly defeat the color picker.
+        material.metallic = 0.5
+        material.roughness = 0.14
+        material.clearcoat = 1.0
+        material.clearcoatRoughness = 0.05
+        material.specular = 1.0
+        return material
     }
 
     private static func model(

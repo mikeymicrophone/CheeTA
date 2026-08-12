@@ -21,6 +21,10 @@ final class ChessGame: ObservableObject {
     @Published private(set) var isReplaying: Bool
     /// A display preference, so it survives restarts and preset loads.
     @Published private(set) var isPulseEnabled: Bool
+    /// Historical permissions for the king and original corner rooks.
+    @Published private(set) var castlingRights: CastlingRights
+    /// Non-nil between selecting a pawn's final-rank move and choosing its role.
+    @Published private(set) var pendingPromotion: PendingPromotion?
 
     private var openingBoard: [Square: Piece]
     private var openingPlayer: Player
@@ -34,11 +38,13 @@ final class ChessGame: ObservableObject {
         let selectedSquare: Square?
         let legalTargets: Set<Square>
         let candidateSquares: Set<Square>
+        let castlingRights: CastlingRights
     }
 
     init(
         board: [Square: Piece] = ChessGame.startingBoard(),
-        currentPlayer: Player = .white
+        currentPlayer: Player = .white,
+        castlingRights: CastlingRights? = nil
     ) {
         self.board = board
         self.currentPlayer = currentPlayer
@@ -54,6 +60,8 @@ final class ChessGame: ObservableObject {
         self.plies = []
         self.isReplaying = false
         self.isPulseEnabled = true
+        self.castlingRights = castlingRights ?? (board == ChessGame.startingBoard() ? .standard : .none)
+        self.pendingPromotion = nil
         self.openingBoard = board
         self.openingPlayer = currentPlayer
         refreshStatus()
@@ -85,6 +93,8 @@ final class ChessGame: ObservableObject {
         endReplay()
         board = Self.startingBoard()
         currentPlayer = .white
+        castlingRights = .standard
+        pendingPromotion = nil
         openingBoard = board
         openingPlayer = .white
         plies = []
@@ -103,6 +113,8 @@ final class ChessGame: ObservableObject {
         endReplay()
         board = Self.board(for: preset)
         currentPlayer = Self.currentPlayer(for: preset)
+        castlingRights = Self.castlingRights(for: preset)
+        pendingPromotion = nil
         openingBoard = board
         openingPlayer = currentPlayer
         plies = []
@@ -153,7 +165,7 @@ final class ChessGame: ObservableObject {
     }
 
     func tap(_ square: Square) {
-        guard !status.isFinished, !isReplaying else { return }
+        guard !status.isFinished, !isReplaying, pendingPromotion == nil else { return }
 
         if let selectedSquare, legalTargets.contains(square) {
             makeMove(from: selectedSquare, to: square)
@@ -191,7 +203,7 @@ final class ChessGame: ObservableObject {
     }
 
     func legalMoves(from origin: Square) -> [Square] {
-        Self.legalMoves(from: origin, on: board)
+        Self.legalMoves(from: origin, on: board, castlingRights: castlingRights)
     }
 
     func isInCheck(_ player: Player) -> Bool {
@@ -201,7 +213,7 @@ final class ChessGame: ObservableObject {
     func movableSquares(for player: Player) -> Set<Square> {
         Set(board.compactMap { square, piece in
             guard piece.player == player,
-                  !Self.legalMoves(from: square, on: board).isEmpty else {
+                  !Self.legalMoves(from: square, on: board, castlingRights: castlingRights).isEmpty else {
                 return nil
             }
             return square
@@ -269,7 +281,7 @@ final class ChessGame: ObservableObject {
     /// Parks the live game so playback can borrow the published position.
     /// Taps are ignored until `endReplay()` puts it back.
     func beginReplay() {
-        guard !isReplaying else { return }
+        guard !isReplaying, pendingPromotion == nil else { return }
 
         liveState = LiveState(
             board: board,
@@ -277,7 +289,8 @@ final class ChessGame: ObservableObject {
             lastMove: lastMove,
             selectedSquare: selectedSquare,
             legalTargets: legalTargets,
-            candidateSquares: candidateSquares
+            candidateSquares: candidateSquares,
+            castlingRights: castlingRights
         )
         selectedSquare = nil
         legalTargets = []
@@ -302,6 +315,7 @@ final class ChessGame: ObservableObject {
         selectedSquare = liveState.selectedSquare
         legalTargets = liveState.legalTargets
         candidateSquares = liveState.candidateSquares
+        castlingRights = liveState.castlingRights
         self.liveState = nil
         isReplaying = false
     }
@@ -317,6 +331,30 @@ final class ChessGame: ObservableObject {
     private func makeMove(from origin: Square, to destination: Square) {
         guard let movingPiece = board[origin], movingPiece.player == currentPlayer else { return }
 
+        if isPromotionMove(piece: movingPiece, to: destination) {
+            pendingPromotion = PendingPromotion(from: origin, to: destination, pawn: movingPiece)
+            selectedSquare = nil
+            legalTargets = []
+            return
+        }
+
+        completeMove(from: origin, to: destination, promotion: nil)
+    }
+
+    func promote(to kind: PieceKind) {
+        guard PendingPromotion.choices.contains(kind),
+              let pendingPromotion else { return }
+
+        completeMove(
+            from: pendingPromotion.from,
+            to: pendingPromotion.to,
+            promotion: kind
+        )
+    }
+
+    private func completeMove(from origin: Square, to destination: Square, promotion: PieceKind?) {
+        guard let movingPiece = board[origin], movingPiece.player == currentPlayer else { return }
+
         var capture: Capture?
         if let takenPiece = board[destination] {
             capture = Capture(
@@ -328,12 +366,25 @@ final class ChessGame: ObservableObject {
             captureCount += 1
         }
 
-        board[destination] = movingPiece
-        board[origin] = nil
-        let move = ChessMove(from: origin, to: destination)
+        let resultingPiece = promotion.map { Piece(kind: $0, player: movingPiece.player) } ?? movingPiece
+        board = Self.applyingMove(
+            from: origin,
+            to: destination,
+            piece: resultingPiece,
+            on: board
+        )
+        revokeCastlingRights(
+            for: movingPiece,
+            from: origin,
+            to: destination,
+            captured: capture?.piece
+        )
+
+        let move = ChessMove(from: origin, to: destination, promotion: promotion)
         lastMove = move
         selectedSquare = nil
         legalTargets = []
+        pendingPromotion = nil
         currentPlayer = currentPlayer.opponent
         candidateSquares = []
         isChoosingCandidates = false
@@ -351,7 +402,11 @@ final class ChessGame: ObservableObject {
     private func refreshStatus() {
         let inCheck = Self.isInCheck(currentPlayer, on: board)
         let hasLegalMove = board.contains { square, piece in
-            piece.player == currentPlayer && !Self.legalMoves(from: square, on: board).isEmpty
+            piece.player == currentPlayer && !Self.legalMoves(
+                from: square,
+                on: board,
+                castlingRights: castlingRights
+            ).isEmpty
         }
 
         if inCheck && !hasLegalMove {
@@ -362,6 +417,30 @@ final class ChessGame: ObservableObject {
             status = .check(currentPlayer)
         } else {
             status = .playing
+        }
+    }
+
+    private func isPromotionMove(piece: Piece, to destination: Square) -> Bool {
+        piece.kind == .pawn && destination.rank == (piece.player == .white ? 7 : 0)
+    }
+
+    private func revokeCastlingRights(
+        for movingPiece: Piece,
+        from origin: Square,
+        to destination: Square,
+        captured: Piece?
+    ) {
+        if movingPiece.kind == .king {
+            castlingRights.revokeAll(for: movingPiece.player)
+        }
+
+        if movingPiece.kind == .rook, let side = Self.castlingSide(forCorner: origin, player: movingPiece.player) {
+            castlingRights.revoke(movingPiece.player, side: side)
+        }
+
+        if captured?.kind == .rook,
+           let side = Self.castlingSide(forCorner: destination, player: movingPiece.player.opponent) {
+            castlingRights.revoke(movingPiece.player.opponent, side: side)
         }
     }
 }
@@ -445,6 +524,16 @@ extension ChessGame {
         }
     }
 
+    static func castlingRights(for preset: PositionPreset) -> CastlingRights {
+        switch preset {
+        case .opening:
+            // The Italian setup has not moved either king or corner rook.
+            .standard
+        case .midgame, .endgame:
+            .none
+        }
+    }
+
     static func currentPlayer(for preset: PositionPreset) -> Player {
         switch preset {
         case .opening, .midgame, .endgame: .white
@@ -459,13 +548,24 @@ extension ChessGame {
         })
     }
 
-    static func legalMoves(from origin: Square, on board: [Square: Piece]) -> [Square] {
+    static func legalMoves(
+        from origin: Square,
+        on board: [Square: Piece],
+        castlingRights: CastlingRights = .none
+    ) -> [Square] {
         guard let movingPiece = board[origin] else { return [] }
 
-        return pseudoLegalMoves(from: origin, on: board).filter { destination in
-            var simulatedBoard = board
-            simulatedBoard[destination] = movingPiece
-            simulatedBoard[origin] = nil
+        return pseudoLegalMoves(
+            from: origin,
+            on: board,
+            castlingRights: castlingRights
+        ).filter { destination in
+            let simulatedBoard = applyingMove(
+                from: origin,
+                to: destination,
+                piece: movingPiece,
+                on: board
+            )
             return !isInCheck(movingPiece.player, on: simulatedBoard)
         }
     }
@@ -482,16 +582,126 @@ extension ChessGame {
         }
     }
 
-    static func pseudoLegalMoves(from origin: Square, on board: [Square: Piece]) -> [Square] {
+    static func pseudoLegalMoves(
+        from origin: Square,
+        on board: [Square: Piece],
+        castlingRights: CastlingRights = .none
+    ) -> [Square] {
         guard let piece = board[origin] else { return [] }
 
         if piece.kind == .pawn {
             return pawnMoves(from: origin, piece: piece, on: board)
         }
 
-        return attackSquares(from: origin, on: board).filter { target in
+        var moves = attackSquares(from: origin, on: board).filter { target in
             guard let occupant = board[target] else { return true }
             return occupant.player != piece.player && occupant.kind != .king
+        }
+
+        if piece.kind == .king {
+            moves += castlingMoves(
+                from: origin,
+                piece: piece,
+                on: board,
+                castlingRights: castlingRights
+            )
+        }
+
+        return moves
+    }
+
+    private static func castlingMoves(
+        from origin: Square,
+        piece: Piece,
+        on board: [Square: Piece],
+        castlingRights: CastlingRights
+    ) -> [Square] {
+        let homeRank = piece.player == .white ? 0 : 7
+        guard piece.kind == .king,
+              origin == Square(file: 4, rank: homeRank),
+              !isInCheck(piece.player, on: board) else {
+            return []
+        }
+
+        return CastlingSide.allCases.compactMap { side in
+            guard castlingRights.allows(piece.player, side: side),
+                  let rookFrom = rookCorner(for: piece.player, side: side),
+                  board[rookFrom] == Piece(kind: .rook, player: piece.player),
+                  let destination = kingDestination(for: piece.player, side: side) else {
+                return nil
+            }
+
+            let betweenFiles = side == .kingSide ? [5, 6] : [1, 2, 3]
+            guard betweenFiles.allSatisfy({ board[Square(file: $0, rank: homeRank)!] == nil }) else {
+                return nil
+            }
+
+            let kingTravelFiles = side == .kingSide ? [5, 6] : [3, 2]
+            let kingCanTravel = kingTravelFiles.allSatisfy { file in
+                let square = Square(file: file, rank: homeRank)!
+                var kingOnlyBoard = board
+                kingOnlyBoard[square] = piece
+                kingOnlyBoard[origin] = nil
+                return !isInCheck(piece.player, on: kingOnlyBoard)
+            }
+            return kingCanTravel ? destination : nil
+        }
+    }
+
+    private static func applyingMove(
+        from origin: Square,
+        to destination: Square,
+        piece: Piece,
+        on board: [Square: Piece]
+    ) -> [Square: Piece] {
+        var updated = board
+        updated[destination] = piece
+        updated[origin] = nil
+
+        if let rookMove = castlingRookMove(for: piece, from: origin, to: destination),
+           updated[rookMove.from] == Piece(kind: .rook, player: piece.player) {
+            updated[rookMove.to] = updated[rookMove.from]
+            updated[rookMove.from] = nil
+        }
+
+        return updated
+    }
+
+    private static func castlingRookMove(
+        for piece: Piece,
+        from origin: Square,
+        to destination: Square
+    ) -> (from: Square, to: Square)? {
+        guard piece.kind == .king, origin.rank == destination.rank,
+              abs(destination.file - origin.file) == 2 else {
+            return nil
+        }
+
+        let side: CastlingSide = destination.file > origin.file ? .kingSide : .queenSide
+        guard let rookFrom = rookCorner(for: piece.player, side: side),
+              let rookTo = Square(
+                file: side == .kingSide ? 5 : 3,
+                rank: origin.rank
+              ) else {
+            return nil
+        }
+        return (rookFrom, rookTo)
+    }
+
+    private static func rookCorner(for player: Player, side: CastlingSide) -> Square? {
+        Square(file: side == .kingSide ? 7 : 0, rank: player == .white ? 0 : 7)
+    }
+
+    private static func kingDestination(for player: Player, side: CastlingSide) -> Square? {
+        Square(file: side == .kingSide ? 6 : 2, rank: player == .white ? 0 : 7)
+    }
+
+    static func castlingSide(forCorner square: Square, player: Player) -> CastlingSide? {
+        guard square.rank == (player == .white ? 0 : 7) else { return nil }
+        switch square.file {
+        case 0: return .queenSide
+        case 7: return .kingSide
+        default: return nil
         }
     }
 
