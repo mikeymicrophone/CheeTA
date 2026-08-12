@@ -479,6 +479,21 @@ enum RealityBoardScene {
         boardSurface.addChild(makeBoardBase(opacity: boardOpacity))
         root.addChild(boardSurface)
 
+        // Both of these are the same for all 64 squares, and both are
+        // expensive: the pulse set runs full legal-move generation for every
+        // piece. Read once per rebuild, not once per square.
+        let pulseSquares = game.candidatePulseSquares
+        let corridorsBySquare = Dictionary(
+            grouping: visibleCorridors.flatMap { corridor in
+                corridor.threatenedSquares.compactMap { square in
+                    marksThreatenedPiece(corridor, at: square, on: game)
+                        ? (square, corridor)
+                        : nil
+                }
+            },
+            by: \.0
+        ).mapValues { $0.map(\.1) }
+
         for rank in 0..<8 {
             for file in 0..<8 {
                 guard let square = Square(file: file, rank: rank) else { continue }
@@ -486,16 +501,14 @@ enum RealityBoardScene {
                 let squareRoot = makeSquare(square, at: position, opacity: boardOpacity)
                 boardSurface.addChild(squareRoot)
 
-                let corridors = visibleCorridors.filter {
-                    marksThreatenedPiece($0, at: square, on: game)
-                }
+                let corridors = corridorsBySquare[square] ?? []
                 if !corridors.isEmpty {
                     let marker = makeThreatMarker(corridors: corridors)
                     marker.position = position + [0, tileHeight / 2 + overlayHeight / 2 + 0.012, 0]
                     root.addChild(marker)
                 }
 
-                if game.candidatePulseSquares.contains(square) {
+                if pulseSquares.contains(square) {
                     let marker = makeCandidatePulseMarker()
                     marker.position = position + [0, tileHeight / 2 + 0.025, 0]
                     root.addChild(marker)

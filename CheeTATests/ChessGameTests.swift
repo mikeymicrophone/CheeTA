@@ -790,6 +790,46 @@ final class ChessGameTests: XCTestCase {
         XCTAssertEqual(game.plies.first?.statusAfter, .playing)
     }
 
+    /// `candidatePulseSquares` runs full legal-move generation for every piece,
+    /// so a scene rebuild must read it once, not once per square. Reading it in
+    /// the 64-square loop cost ~83ms per rebuild — five frame budgets.
+    func testRebuildEngineWorkStaysWithinAFrameBudget() {
+        let game = ChessGame()
+        game.load(.midgame)
+        let clock = ContinuousClock()
+
+        _ = game.candidatePulseSquares // warm up
+
+        // What one rebuild now asks the engine for, in the order it asks.
+        let perRebuild = clock.measure {
+            let corridors = game.threatCorridors(for: .enemyContact)
+            let pulse = game.candidatePulseSquares
+            for rank in 0..<8 {
+                for file in 0..<8 {
+                    guard let square = Square(file: file, rank: rank) else { continue }
+                    _ = pulse.contains(square)
+                    _ = corridors.contains { $0.threatenedSquares.contains(square) }
+                    _ = game.isKingInCheck(at: square)
+                    _ = game.piece(at: square)
+                }
+            }
+        }
+
+        let perSquareCost = clock.measure {
+            for _ in 0..<64 { _ = game.candidatePulseSquares }
+        }
+
+        print("PERF rebuild engine work: \(perRebuild)")
+        print("PERF if read per square:  \(perSquareCost)")
+
+        // 16ms is one 60fps frame. The regression this guards against blew
+        // through it five times over.
+        XCTAssertLessThan(
+            perRebuild, .milliseconds(16),
+            "A rebuild's engine work no longer fits in a frame — check for an expensive computed property being read inside the 64-square loop."
+        )
+    }
+
     private func makeBoard(_ entries: [(String, PieceKind, Player)]) -> [Square: Piece] {
         Dictionary(uniqueKeysWithValues: entries.map { notation, kind, player in
             (Square(notation)!, Piece(kind: kind, player: player))
