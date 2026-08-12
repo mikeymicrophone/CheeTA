@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var cutSceneLog: [CutSceneEvent] = []
     @State private var isReelPresented = false
     @State private var isFENTransferPresented = false
+    @State private var isPieceGalleryPresented = false
     /// Reconstructing an earlier position should not replay its old cut scenes
     /// as if the player had just made those moves again.
     @State private var suppressCutSceneTriggers = false
@@ -45,6 +46,9 @@ struct ContentView: View {
         .background(Color(.systemBackground))
         .sheet(isPresented: $isFENTransferPresented) {
             FENTransferSheet(game: game)
+        }
+        .sheet(isPresented: $isPieceGalleryPresented) {
+            PieceGalleryView(palette: piecePalette)
         }
         .sheet(isPresented: $isGameBrowserPresented) {
             GameBrowserView(library: gameLibrary, palette: piecePalette) { stored in
@@ -517,6 +521,14 @@ struct ContentView: View {
             }
             .accessibilityLabel("Position code")
             .accessibilityHint("Copy or load a FEN position")
+
+            Button {
+                isPieceGalleryPresented = true
+            } label: {
+                controlIcon("cube.transparent", tint: .purple)
+            }
+            .accessibilityLabel("Piece gallery")
+            .accessibilityHint("Inspect each chess piece up close")
 
             Menu {
                 Section("Replay") {

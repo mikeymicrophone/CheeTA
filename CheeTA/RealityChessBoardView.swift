@@ -79,14 +79,17 @@ struct RealityChessBoardView: View {
                         cameraState.startYaw = cameraState.yaw
                         cameraState.startElevation = cameraState.elevation
                     }
-                    cameraState.yaw = cameraState.startYaw + Float(value.translation.width) * 0.008
+                    // Negated so the board turns with the finger. Adding the
+                    // translation orbits the camera toward the drag instead,
+                    // which reads as the board sliding the opposite way.
+                    cameraState.yaw = cameraState.startYaw - Float(value.translation.width) * 0.008
                     cameraState.elevation = cameraState.clampedElevation(
                         cameraState.startElevation - Float(value.translation.height) * 0.005
                     )
                     cameraState.apply()
                 }
                 .onEnded { value in
-                    cameraState.yaw = cameraState.startYaw + Float(value.translation.width) * 0.008
+                    cameraState.yaw = cameraState.startYaw - Float(value.translation.width) * 0.008
                     cameraState.elevation = cameraState.clampedElevation(
                         cameraState.startElevation - Float(value.translation.height) * 0.005
                     )
@@ -455,7 +458,7 @@ private final class BoardLightRig {
 /// The only layer that knows how the 3D board looks. Future USDZ character
 /// models can replace `makePiece` while the chess and threat engines stay put.
 @MainActor
-private enum RealityBoardScene {
+enum RealityBoardScene {
     static let sceneRootName = "cheeta-board-scene"
     static let cameraName = "cheeta-board-camera"
 
@@ -517,17 +520,24 @@ private enum RealityBoardScene {
                 }
 
                 if game.legalTargets.contains(square) {
-                    let marker: Entity
-                    if game.piece(at: square) == nil {
-                        marker = model(
-                            .generateCylinder(height: 0.035, radius: 0.14),
-                            color: UIColor.systemBlue.withAlphaComponent(0.82)
+                    let isCapture = game.piece(at: square) != nil
+
+                    // An arrow from the piece to the square says where it is
+                    // going, not merely where it may land.
+                    if let origin = game.selectedSquare {
+                        let arrow = makeMoveArrow(
+                            from: boardPosition(for: origin),
+                            to: position,
+                            color: isCapture ? .systemRed : .systemBlue
                         )
-                    } else {
-                        marker = makeFrame(color: .systemRed, thickness: 0.075)
+                        root.addChild(arrow)
                     }
-                    marker.position = position + [0, tileHeight / 2 + 0.075, 0]
-                    root.addChild(marker)
+
+                    if isCapture {
+                        let marker = makeFrame(color: .systemRed, thickness: 0.075)
+                        marker.position = position + [0, tileHeight / 2 + 0.075, 0]
+                        root.addChild(marker)
+                    }
                 }
 
                 if let piece = game.piece(at: square) {
@@ -628,7 +638,9 @@ private enum RealityBoardScene {
         return tile
     }
 
-    private static func makePiece(_ piece: Piece, palette: PiecePalette) -> Entity {
+    /// Shared by the board and the close-up gallery, guaranteeing the player
+    /// inspects the exact model they will later use in a game.
+    static func makePiece(_ piece: Piece, palette: PiecePalette) -> Entity {
         let root = Entity()
         let colors = palette.colors(for: piece.player)
         let pieceColor = colors.piece
@@ -841,6 +853,52 @@ private enum RealityBoardScene {
                 root.addChild(bar)
             }
         }
+        return root
+    }
+
+    /// A thick shaft with a cone head, laid flat on the board and pointing
+    /// from the selected piece to one of its destinations. Built along +Z and
+    /// then yawed, which keeps the geometry readable.
+    private static func makeMoveArrow(
+        from origin: SIMD3<Float>,
+        to destination: SIMD3<Float>,
+        color: UIColor
+    ) -> Entity {
+        let root = Entity()
+
+        let delta = destination - origin
+        let span = (delta.x * delta.x + delta.z * delta.z).squareRoot()
+        guard span > 0.01 else { return root }
+
+        // Clear of the piece it starts under, and stopping on the target.
+        let tailGap: Float = 0.34
+        let headLength: Float = 0.36
+        let shaftLength = max(0.06, span - tailGap - headLength)
+
+        let material = color.withAlphaComponent(0.92)
+
+        let shaft = model(
+            .generateBox(size: [0.17, 0.055, shaftLength], cornerRadius: 0.025),
+            color: material,
+            metallic: true,
+            roughness: 0.2
+        )
+        shaft.position = [0, 0, tailGap + shaftLength / 2]
+        root.addChild(shaft)
+
+        let head = model(
+            .generateCone(height: headLength, radius: 0.24),
+            color: material,
+            metallic: true,
+            roughness: 0.2
+        )
+        // The cone is built pointing up; tip it to lie along +Z.
+        head.orientation = simd_quatf(angle: .pi / 2, axis: [1, 0, 0])
+        head.position = [0, 0, tailGap + shaftLength + headLength / 2]
+        root.addChild(head)
+
+        root.orientation = simd_quatf(angle: atan2(delta.x, delta.z), axis: [0, 1, 0])
+        root.position = origin + [0, tileHeight / 2 + 0.06, 0]
         return root
     }
 

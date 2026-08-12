@@ -24,6 +24,7 @@
 		100000000000000000000015 /* EnPassantCutSceneViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000017 /* EnPassantCutSceneViews.swift */; };
 		100000000000000000000016 /* GameLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000018 /* GameLibrary.swift */; };
 		100000000000000000000017 /* GameBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* GameBrowserView.swift */; };
+		100000000000000000000018 /* PieceGalleryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000020 /* PieceGalleryView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,6 +57,7 @@
 		200000000000000000000017 /* EnPassantCutSceneViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnPassantCutSceneViews.swift; sourceTree = "<group>"; };
 		200000000000000000000018 /* GameLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameLibrary.swift; sourceTree = "<group>"; };
 		200000000000000000000019 /* GameBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameBrowserView.swift; sourceTree = "<group>"; };
+		200000000000000000000020 /* PieceGalleryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PieceGalleryView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -103,6 +105,7 @@
 				200000000000000000000016 /* CutSceneReel.swift */,
 				200000000000000000000017 /* EnPassantCutSceneViews.swift */,
 				200000000000000000000019 /* GameBrowserView.swift */,
+				200000000000000000000020 /* PieceGalleryView.swift */,
 				200000000000000000000018 /* GameLibrary.swift */,
 				200000000000000000000005 /* Assets.xcassets */,
 			);
@@ -248,7 +251,7 @@
 				100000000000000000000015 /* EnPassantCutSceneViews.swift in Sources */,
 				100000000000000000000016 /* GameLibrary.swift in Sources */,
 				100000000000000000000017 /* GameBrowserView.swift in Sources */,
-				100000000000000000000016 /* GameLibrary.swift in Sources */,
+				100000000000000000000018 /* PieceGalleryView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

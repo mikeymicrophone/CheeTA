@@ -25,6 +25,7 @@ let package = Package(
                 "EnPassantCutSceneViews.swift",
                 "FirstCaptureCutSceneView.swift",
                 "GameBrowserView.swift",
+                "PieceGalleryView.swift",
                 "QueenDownCutSceneView.swift",
                 "RealityChessBoardView.swift",
                 "ReplayControls.swift"

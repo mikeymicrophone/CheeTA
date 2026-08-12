@@ -1,6 +1,6 @@
 import Foundation
 
-enum Player: String, CaseIterable, Sendable {
+enum Player: String, CaseIterable, Hashable, Sendable {
     case white
     case black
 
