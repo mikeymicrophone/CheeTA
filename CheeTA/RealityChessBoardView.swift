@@ -8,6 +8,9 @@ struct RealityChessBoardView: View {
     let boardOpacity: Float
     let piecePalette: PiecePalette
     let isLightLoose: Bool
+    var onTap: ((Square) -> Void)? = nil
+    var inspectSelectedSquare: Square? = nil
+    var inspectLegalTargets: Set<Square>? = nil
     @State private var cameraState = BoardCameraState()
     @State private var lightRig = BoardLightRig()
 
@@ -41,7 +44,9 @@ struct RealityChessBoardView: View {
                 game: game,
                 visibleCorridors: visibleCorridors,
                 boardOpacity: boardOpacity,
-                piecePalette: piecePalette
+                piecePalette: piecePalette,
+                selectedSquare: inspectSelectedSquare,
+                legalTargets: inspectLegalTargets
             )
         } update: { content in
             guard let sceneRoot = content.entities.first(where: {
@@ -53,7 +58,9 @@ struct RealityChessBoardView: View {
                 game: game,
                 visibleCorridors: visibleCorridors,
                 boardOpacity: boardOpacity,
-                piecePalette: piecePalette
+                piecePalette: piecePalette,
+                selectedSquare: inspectSelectedSquare,
+                legalTargets: inspectLegalTargets
             )
             cameraState.camera = content.entities.first(where: {
                 $0.name == RealityBoardScene.cameraName
@@ -68,7 +75,7 @@ struct RealityChessBoardView: View {
                     guard let square = RealityBoardScene.square(from: value.entity) else {
                         return
                     }
-                    game.tap(square)
+                    (onTap ?? { game.tap($0) })(square)
                 }
         )
         .simultaneousGesture(
@@ -471,8 +478,12 @@ enum RealityBoardScene {
         game: ChessGame,
         visibleCorridors: [ThreatCorridor],
         boardOpacity: Float,
-        piecePalette: PiecePalette
+        piecePalette: PiecePalette,
+        selectedSquare: Square? = nil,
+        legalTargets: Set<Square>? = nil
     ) {
+        let selected = selectedSquare ?? game.selectedSquare
+        let targets = legalTargets ?? game.legalTargets
         root.children.removeAll()
 
         let boardSurface = Entity()
@@ -526,18 +537,18 @@ enum RealityBoardScene {
                     root.addChild(marker)
                 }
 
-                if game.selectedSquare == square {
+                if selected == square {
                     let marker = makeFrame(color: .systemYellow, thickness: 0.075)
                     marker.position = position + [0, tileHeight / 2 + 0.055, 0]
                     root.addChild(marker)
                 }
 
-                if game.legalTargets.contains(square) {
+                if targets.contains(square) {
                     let isCapture = game.piece(at: square) != nil
 
                     // An arrow from the piece to the square says where it is
                     // going, not merely where it may land.
-                    if let origin = game.selectedSquare {
+                    if let origin = selected {
                         let arrow = makeMoveArrow(
                             from: boardPosition(for: origin),
                             to: position,

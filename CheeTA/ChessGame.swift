@@ -57,6 +57,7 @@ final class ChessGame: ObservableObject {
         let enPassantTarget: Square?
         let halfmoveClock: Int
         let fullmoveNumber: Int
+        let status: PositionStatus
     }
 
     init(
@@ -97,6 +98,21 @@ final class ChessGame: ObservableObject {
         self.openingFullmoveNumber = 1
         refreshStatus()
     }
+
+    /// The position history is measured from. Reset, preset, and FEN load
+    /// replace this; undo never does.
+    var openingSnapshot: OpeningSnapshot {
+        OpeningSnapshot(
+            board: openingBoard,
+            playerToMove: openingPlayer,
+            castlingRights: openingCastlingRights,
+            enPassantTarget: openingEnPassantTarget,
+            halfmoveClock: openingHalfmoveClock,
+            fullmoveNumber: openingFullmoveNumber
+        )
+    }
+
+    var openingFEN: String { openingSnapshot.fen }
 
     var statusText: String {
         switch status {
@@ -182,22 +198,40 @@ final class ChessGame: ObservableObject {
     /// ordinary rules, so the loaded game arrives with real history: it can be
     /// replayed, and its cut scenes can be derived from the plies.
     func load(_ stored: StoredGame) {
-        reset()
+        // Generated shelf games are legal by construction. The validating
+        // primitive is the only replay path.
+        try? load(openingFEN: OpeningSnapshot.standardFEN, moves: stored.moves)
+    }
 
-        for move in stored.moves {
-            completeMove(
-                from: move.from,
-                to: move.to,
-                promotion: move.promotion
-            )
+    /// Replays `moves` from `openingFEN`. Each move is checked with
+    /// `legalMoves` before it is applied. On the first illegal move the
+    /// position stays at the last legal ply and this throws.
+    func load(openingFEN: String, moves: [ChessMove]) throws {
+        guard moves.count <= 2000 else {
+            throw GameLoadError.tooManyPlies(moves.count)
         }
-
+        try load(fen: openingFEN)
+        for (index, move) in moves.enumerated() {
+            guard legalMoves(from: move.from).contains(move.to) else {
+                throw GameLoadError.illegalMove(index: index, move: move)
+            }
+            if let promo = move.promotion {
+                guard PendingPromotion.choices.contains(promo) else {
+                    throw GameLoadError.illegalMove(index: index, move: move)
+                }
+            }
+            completeMove(from: move.from, to: move.to, promotion: move.promotion)
+        }
         selectedSquare = nil
         legalTargets = []
         candidateSquares = []
         isChoosingCandidates = false
-        // A stored game is its own thing, not one of the built-in positions.
         positionPreset = nil
+    }
+
+    func clearSelection() {
+        selectedSquare = nil
+        legalTargets = []
     }
 
     /// A standard six-field Forsyth-Edwards Notation representation of the
@@ -475,14 +509,21 @@ final class ChessGame: ObservableObject {
             opening = ReplayFrame(
                 board: openingBoard,
                 move: nil,
-                playerToMove: openingPlayer
+                playerToMove: openingPlayer,
+                status: Self.positionStatus(
+                    board: openingBoard,
+                    player: openingPlayer,
+                    castlingRights: openingCastlingRights,
+                    enPassantTarget: openingEnPassantTarget
+                )
             )
         } else {
             let previous = plies[start - 1]
             opening = ReplayFrame(
                 board: previous.boardAfter,
                 move: previous.move,
-                playerToMove: previous.playerToMoveAfter
+                playerToMove: previous.playerToMoveAfter,
+                status: previous.statusAfter
             )
         }
 
@@ -490,7 +531,8 @@ final class ChessGame: ObservableObject {
             ReplayFrame(
                 board: $0.boardAfter,
                 move: $0.move,
-                playerToMove: $0.playerToMoveAfter
+                playerToMove: $0.playerToMoveAfter,
+                status: $0.statusAfter
             )
         }
     }
@@ -510,7 +552,8 @@ final class ChessGame: ObservableObject {
             castlingRights: castlingRights,
             enPassantTarget: enPassantTarget,
             halfmoveClock: halfmoveClock,
-            fullmoveNumber: fullmoveNumber
+            fullmoveNumber: fullmoveNumber,
+            status: status
         )
         selectedSquare = nil
         legalTargets = []
@@ -524,6 +567,7 @@ final class ChessGame: ObservableObject {
         board = frame.board
         currentPlayer = frame.playerToMove
         lastMove = frame.move
+        status = frame.status
     }
 
     func endReplay() {
@@ -539,6 +583,7 @@ final class ChessGame: ObservableObject {
         enPassantTarget = liveState.enPassantTarget
         halfmoveClock = liveState.halfmoveClock
         fullmoveNumber = liveState.fullmoveNumber
+        status = liveState.status
         self.liveState = nil
         isReplaying = false
     }
@@ -661,9 +706,23 @@ final class ChessGame: ObservableObject {
     }
 
     private func refreshStatus() {
-        let inCheck = Self.isInCheck(currentPlayer, on: board)
+        status = Self.positionStatus(
+            board: board,
+            player: currentPlayer,
+            castlingRights: castlingRights,
+            enPassantTarget: enPassantTarget
+        )
+    }
+
+    static func positionStatus(
+        board: [Square: Piece],
+        player: Player,
+        castlingRights: CastlingRights,
+        enPassantTarget: Square?
+    ) -> PositionStatus {
+        let inCheck = isInCheck(player, on: board)
         let hasLegalMove = board.contains { square, piece in
-            piece.player == currentPlayer && !Self.legalMoves(
+            piece.player == player && !legalMoves(
                 from: square,
                 on: board,
                 castlingRights: castlingRights,
@@ -672,14 +731,15 @@ final class ChessGame: ObservableObject {
         }
 
         if inCheck && !hasLegalMove {
-            status = .checkmate(winner: currentPlayer.opponent)
-        } else if !inCheck && !hasLegalMove {
-            status = .stalemate
-        } else if inCheck {
-            status = .check(currentPlayer)
-        } else {
-            status = .playing
+            return .checkmate(winner: player.opponent)
         }
+        if !inCheck && !hasLegalMove {
+            return .stalemate
+        }
+        if inCheck {
+            return .check(player)
+        }
+        return .playing
     }
 
     private func isPromotionMove(piece: Piece, to destination: Square) -> Bool {
@@ -716,7 +776,21 @@ private struct FENPosition {
     let fullmoveNumber: Int
 }
 
-private enum FENError: LocalizedError {
+enum GameLoadError: LocalizedError, Equatable {
+    case illegalMove(index: Int, move: ChessMove)
+    case tooManyPlies(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .illegalMove(let index, let move):
+            "Move \(index + 1) (\(move.from.algebraic)–\(move.to.algebraic)) is not legal"
+        case .tooManyPlies(let count):
+            "Game has too many moves (\(count))"
+        }
+    }
+}
+
+enum FENError: LocalizedError {
     case invalid(String)
 
     var errorDescription: String? {
@@ -727,7 +801,17 @@ private enum FENError: LocalizedError {
 }
 
 extension ChessGame {
-    private static func makeFEN(
+    /// Full six-field parse, no mutation. Call before abandoning a dirty game.
+    nonisolated static func validateFEN(_ notation: String) throws {
+        _ = try parseFEN(notation)
+    }
+
+    /// Piece placement only. Ignores side-to-move, rights, and clocks.
+    nonisolated static func board(fromFEN notation: String) throws -> [Square: Piece] {
+        try parsePlacement(from: notation)
+    }
+
+    nonisolated static func makeFEN(
         board: [Square: Piece],
         currentPlayer: Player,
         castlingRights: CastlingRights,
@@ -770,13 +854,16 @@ extension ChessGame {
         ].joined(separator: " ")
     }
 
-    private static func parseFEN(_ notation: String) throws -> FENPosition {
+    private nonisolated static func parsePlacement(from notation: String) throws -> [Square: Piece] {
         let fields = notation.split(whereSeparator: { $0.isWhitespace })
-        guard fields.count == 6 else {
+        guard !fields.isEmpty else {
             throw FENError.invalid("use six space-separated fields")
         }
+        return try parsePlacementField(fields[0])
+    }
 
-        let ranks = fields[0].split(separator: "/", omittingEmptySubsequences: false)
+    private nonisolated static func parsePlacementField(_ placement: Substring) throws -> [Square: Piece] {
+        let ranks = placement.split(separator: "/", omittingEmptySubsequences: false)
         guard ranks.count == 8 else {
             throw FENError.invalid("piece placement must contain eight ranks")
         }
@@ -805,6 +892,16 @@ extension ChessGame {
                 throw FENError.invalid("rank \(8 - fenRank) must describe exactly eight squares")
             }
         }
+        return board
+    }
+
+    private nonisolated static func parseFEN(_ notation: String) throws -> FENPosition {
+        let fields = notation.split(whereSeparator: { $0.isWhitespace })
+        guard fields.count == 6 else {
+            throw FENError.invalid("use six space-separated fields")
+        }
+
+        let board = try parsePlacementField(fields[0])
 
         guard board.values.filter({ $0 == Piece(kind: .king, player: .white) }).count == 1,
               board.values.filter({ $0 == Piece(kind: .king, player: .black) }).count == 1 else {
@@ -837,7 +934,7 @@ extension ChessGame {
         )
     }
 
-    private static func fenCharacter(for piece: Piece) -> Character {
+    private nonisolated static func fenCharacter(for piece: Piece) -> Character {
         let character: Character
         switch piece.kind {
         case .king: character = "k"
@@ -850,7 +947,7 @@ extension ChessGame {
         return piece.player == .white ? Character(String(character).uppercased()) : character
     }
 
-    private static func piece(forFENCharacter character: Character) -> Piece? {
+    private nonisolated static func piece(forFENCharacter character: Character) -> Piece? {
         let player: Player = character.isUppercase ? .white : .black
         let kind: PieceKind
         switch character.lowercased() {
@@ -865,7 +962,7 @@ extension ChessGame {
         return Piece(kind: kind, player: player)
     }
 
-    private static func parseCastlingRights(_ field: String) throws -> CastlingRights {
+    private nonisolated static func parseCastlingRights(_ field: String) throws -> CastlingRights {
         if field == "-" { return .none }
         var rights = CastlingRights.none
         var seen: Set<Character> = []
@@ -884,7 +981,7 @@ extension ChessGame {
         return rights
     }
 
-    private static func parseEnPassantTarget(
+    private nonisolated static func parseEnPassantTarget(
         _ field: String,
         on board: [Square: Piece]
     ) throws -> Square? {

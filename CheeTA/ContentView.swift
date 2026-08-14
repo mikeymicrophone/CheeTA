@@ -25,35 +25,53 @@ struct ContentView: View {
     @State private var isGameBrowserPresented = false
     @StateObject private var replay = ReplayPlayer()
     @StateObject private var gameLibrary = GameLibrary()
+    @StateObject private var history = HistoryController()
+    @StateObject private var session = GameSession()
+    @StateObject private var savedGames = SavedGameStore()
+    @State private var inspectProbe: ChessGame?
+    @State private var isApplyingCommittedMove = false
+    @State private var windowIsLandscape = true
+    @State private var fenSheetError: String?
+    @State private var pendingReplacement: GameReplacement?
+    @State private var abandonPrompt: AbandonPrompt?
+    @State private var replaceDiscardedPrompt = false
+    @State private var restoreDiscardedPrompt = false
+    @AppStorage("historyPanePresented.compact") private var compactOverride: Bool?
+    @AppStorage("historyPanePresented.regularPortrait") private var regularPortraitOverride: Bool?
+    @AppStorage("historyPanePresented.regularLandscape") private var regularLandscapeOverride: Bool?
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var autosaveTask: Task<Void, Never>?
+    @State private var pendingCommit: PendingForkCommit?
 
     var body: some View {
-        ZStack {
-            Color(.systemBackground)
+        dialogs(attachedTo: stagedBoard)
+    }
 
-            // Two RealityKit scenes at once is too expensive: the board keeps
-            // rebuilding thirty-two pieces and ticking its light while the
-            // gallery tries to tumble one. Tear the game down for the visit.
-            if !isPieceGalleryPresented {
-                VStack(spacing: 20) {
-                    board
-                        .overlay(alignment: .bottom) {
-                            if let progress = replay.progress {
-                                ReplayBadge(progress: progress) {
-                                    replay.stop(in: game)
-                                }
-                                .padding(.bottom, 18)
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
-                            }
-                        }
-                        .animation(.snappy(duration: 0.24), value: replay.progress)
-                    controlBar
-                }
-                .padding(24)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    private var stagedBoard: some View {
+        gameStage
+            .background { windowAspectReader }
+            .onPreferenceChange(WindowAspectKey.self) { windowIsLandscape = $0 }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func dialogs(attachedTo content: some View) -> some View {
+        withScenes(withDialogs(content))
+    }
+
+    private func withDialogs<Content: View>(_ content: Content) -> some View {
+        content
         .sheet(isPresented: $isFENTransferPresented) {
-            FENTransferSheet(game: game)
+            FENTransferSheet(
+                currentFEN: game.fen,
+                errorMessage: fenSheetError,
+                onLoad: { notation in
+                    fenSheetError = nil
+                    replaceGame(.fen(notation))
+                    if fenSheetError == nil, pendingReplacement == nil {
+                        isFENTransferPresented = false
+                    }
+                }
+            )
         }
         .sheet(isPresented: $isPieceGalleryPresented) {
             PieceGalleryView(palette: piecePalette)
@@ -64,10 +82,84 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $isGameBrowserPresented) {
-            GameBrowserView(library: gameLibrary, palette: piecePalette) { stored in
-                load(stored)
+            GameBrowserView(
+                library: gameLibrary,
+                savedGames: savedGames,
+                palette: piecePalette
+            ) { pick in
+                switch pick {
+                case .shelf(let stored):
+                    replaceGame(.stored(stored))
+                case .saved(let document):
+                    replaceGame(.document(document))
+                }
             }
         }
+        .task { await savedGames.loadAll() }
+        .alert("Save this game?", isPresented: abandonAlertPresented) {
+            Button("Save") {
+                saveCurrentGame(asCopy: false)
+                if let pendingReplacement {
+                    applyReplacement(pendingReplacement)
+                    self.pendingReplacement = nil
+                }
+            }
+            Button("Don't Save", role: .destructive) {
+                if let pendingReplacement {
+                    applyReplacement(pendingReplacement)
+                    self.pendingReplacement = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingReplacement = nil
+            }
+        } message: {
+            Text("“\(session.title)” has unsaved changes.")
+        }
+        .alert("Replace the discarded line?", isPresented: $replaceDiscardedPrompt) {
+            Button("Replace", role: .destructive) {
+                if let pendingCommit {
+                    finishDifferentMoveCommit(pendingCommit, replacingDiscarded: true)
+                    self.pendingCommit = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingCommit = nil
+            }
+        }
+        .alert("Replace the current game with the discarded line?", isPresented: $restoreDiscardedPrompt) {
+            Button("Restore", role: .destructive) {
+                if let discarded = session.discardedLine {
+                    restoreDiscardedLine(discarded)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Could not load game", isPresented: storeErrorPresented) {
+            Button("OK", role: .cancel) { savedGames.lastError = nil }
+        } message: {
+            Text(savedGames.lastError ?? "")
+        }
+        .onChange(of: session.title) { _, newTitle in
+            session.noteContentChanged(
+                openingFEN: game.openingFEN,
+                moves: game.plies.map(\.move),
+                title: newTitle
+            )
+            scheduleAutosave()
+        }
+        .onChange(of: game.plies) { _, _ in
+            session.noteContentChanged(
+                openingFEN: game.openingFEN,
+                moves: game.plies.map(\.move),
+                title: session.title
+            )
+            scheduleAutosave()
+        }
+    }
+
+    private func withScenes<Content: View>(_ content: Content) -> some View {
+        content
         .overlay {
             if let checkCutScene {
                 CheckCutSceneView(checkedPlayer: checkCutScene.checkedPlayer) {
@@ -142,10 +234,20 @@ struct ContentView: View {
             }
         }
         .overlay {
-            if let promotion = game.pendingPromotion {
+            if let promotion = history.isInspecting ? history.pendingPromotion : game.pendingPromotion {
                 PromotionPicker(player: promotion.pawn.player) { kind in
                     withAnimation(.snappy(duration: 0.18)) {
-                        game.promote(to: kind)
+                        if history.isInspecting {
+                            inspectProbe?.promote(to: kind)
+                            history.pendingPromotion = inspectProbe?.pendingPromotion
+                            history.selectedSquare = inspectProbe?.selectedSquare
+                            history.legalTargets = inspectProbe?.legalTargets ?? []
+                            if let move = inspectProbe?.plies.last?.move {
+                                commitInspectedMove(move)
+                            }
+                        } else {
+                            game.promote(to: kind)
+                        }
                     }
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.92)))
@@ -220,14 +322,23 @@ struct ContentView: View {
                 cutSceneLog.removeAll()
             }
         }
+        .onChange(of: replay.isPlaying) { _, playing in
+            if !playing, !history.isInspecting {
+                DispatchQueue.main.async { suppressCutSceneTriggers = false }
+            }
+        }
     }
 
     private func startReplay(lastPlies: Int?) {
+        if isApplyingCommittedMove { return }
+        if history.isInspecting {
+            inspectProbe = nil
+            history.returnToLive(in: game)
+        }
+
         let frames = game.replayFrames(lastPlies: lastPlies)
         guard let opening = frames.first else { return }
 
-        // The board frames and the recorded cut scenes are woven into one
-        // timeline, so a replay plays the game back the way it was lived.
         let start = game.replayStartIndex(lastPlies: lastPlies)
         var steps: [ReplayStep] = [.position(opening)]
 
@@ -240,10 +351,12 @@ struct ContentView: View {
             }
         }
 
+        suppressCutSceneTriggers = true
         replay.play(
             steps,
             title: lastPlies == nil ? "Replay" : "Last \(lastPlies!)",
-            in: game
+            in: game,
+            replayStartIndex: start
         )
     }
 
@@ -270,23 +383,405 @@ struct ContentView: View {
         }
     }
 
-    /// Loading a stored game replays dozens of moves in one go. The scenes
-    /// those moves would have fired are suppressed as they stream past, then
-    /// derived from the finished history — so the game arrives with its reel
-    /// intact instead of a burst of cards on load.
-    private func load(_ stored: StoredGame) {
-        replay.stop(in: game)
+    private var canUndoFromMenu: Bool {
+        !isApplyingCommittedMove && !game.plies.isEmpty && game.pendingPromotion == nil
+    }
+
+    private func undoFromMenu(plies: Int) {
+        if isApplyingCommittedMove { return }
+        if history.isInspecting {
+            returnToLive()
+        }
+        undo(plies: plies)
+    }
+
+    private enum HistoryPaneSlot: String {
+        case compact
+        case regularPortrait
+        case regularLandscape
+    }
+
+    private var historyPaneSlot: HistoryPaneSlot {
+        if horizontalSizeClass == .compact { return .compact }
+        return windowIsLandscape ? .regularLandscape : .regularPortrait
+    }
+
+    private var isHistoryPresented: Binding<Bool> {
+        Binding(
+            get: {
+                switch historyPaneSlot {
+                case .compact: compactOverride ?? false
+                case .regularPortrait: regularPortraitOverride ?? false
+                case .regularLandscape: regularLandscapeOverride ?? true
+                }
+            },
+            set: { newValue in
+                switch historyPaneSlot {
+                case .compact: compactOverride = newValue
+                case .regularPortrait: regularPortraitOverride = newValue
+                case .regularLandscape: regularLandscapeOverride = newValue
+                }
+            }
+        )
+    }
+
+    private var abandonAlertPresented: Binding<Bool> {
+        Binding(
+            get: { abandonPrompt != nil },
+            set: { if !$0 { abandonPrompt = nil } }
+        )
+    }
+
+    private var storeErrorPresented: Binding<Bool> {
+        Binding(
+            get: { savedGames.lastError != nil },
+            set: { if !$0 { savedGames.lastError = nil } }
+        )
+    }
+
+    private func handleBoardTap(_ square: Square) {
+        if isApplyingCommittedMove { return }
+        if replay.isPlaying {
+            replay.stop(in: game)
+            return
+        }
+        if history.isInspecting {
+            handleInspectSelection(square)
+            return
+        }
+        game.tap(square)
+    }
+
+    private func inspect(_ target: HistoryCursor) {
+        if isApplyingCommittedMove { return }
+        if replay.isPlaying { replay.stop(in: game) }
         suppressCutSceneTriggers = true
+        history.show(target, in: game)
+        prepareInspectProbe(for: target)
+    }
+
+    private func returnToLive() {
+        if replay.isPlaying { replay.stop(in: game) }
+        inspectProbe = nil
+        history.returnToLive(in: game)
+        DispatchQueue.main.async { suppressCutSceneTriggers = false }
+    }
+
+    private func prepareInspectProbe(for target: HistoryCursor) {
+        do {
+            inspectProbe = try makeInspectProbe(for: target, live: game)
+            history.selectedSquare = inspectProbe?.selectedSquare
+            history.legalTargets = inspectProbe?.legalTargets ?? []
+            history.pendingPromotion = inspectProbe?.pendingPromotion
+        } catch {
+            savedGames.report(error.localizedDescription)
+            returnToLive()
+        }
+    }
+
+    private func makeInspectProbe(for cursor: HistoryCursor, live: ChessGame) throws -> ChessGame {
+        let prefix: [ChessMove]
+        switch cursor {
+        case .live:
+            preconditionFailure("not inspecting")
+        case .opening:
+            prefix = []
+        case .ply(let n):
+            prefix = Array(live.plies.prefix(n + 1).map(\.move))
+        }
+        let probe = ChessGame()
+        try probe.load(openingFEN: live.openingFEN, moves: prefix)
+        return probe
+    }
+
+    private func handleInspectSelection(_ square: Square) {
+        guard let probe = inspectProbe else { return }
+        probe.tap(square)
+        history.selectedSquare = probe.selectedSquare
+        history.legalTargets = probe.legalTargets
+        history.pendingPromotion = probe.pendingPromotion
+        if probe.pendingPromotion == nil, let move = probe.plies.last?.move,
+           probe.plies.count == inspectPrefixCount + 1 {
+            commitInspectedMove(move)
+        }
+    }
+
+    private var inspectPrefixCount: Int {
+        switch history.cursor {
+        case .live: 0
+        case .opening: 0
+        case .ply(let n): n + 1
+        }
+    }
+
+    private func commitInspectedMove(_ move: ChessMove) {
+        let suffix: [ChessMove]
+        let forkPlyIndex: Int?
+        switch history.cursor {
+        case .live:
+            return
+        case .opening:
+            suffix = game.plies.map(\.move)
+            forkPlyIndex = nil
+        case .ply(let n):
+            suffix = Array(game.plies.dropFirst(n + 1).map(\.move))
+            forkPlyIndex = n
+        }
+
+        if suffix.first == move {
+            if suffix.count == 1 {
+                returnToLive()
+            } else if case .ply(let n) = history.cursor {
+                inspect(.ply(n + 1))
+            } else {
+                inspect(.ply(0))
+            }
+            return
+        }
+
+        if suffix.isEmpty {
+            playCommittedMoveOnLiveLine(move, truncateBy: 0, onApplied: {})
+            return
+        }
+
+        let pending = PendingForkCommit(move: move, suffix: suffix, forkPlyIndex: forkPlyIndex)
+        if session.replaceDiscardedConfirmationNeeded() {
+            pendingCommit = pending
+            replaceDiscardedPrompt = true
+            return
+        }
+        finishDifferentMoveCommit(pending, replacingDiscarded: false)
+    }
+
+    private func finishDifferentMoveCommit(_ pending: PendingForkCommit, replacingDiscarded: Bool) {
+        if replacingDiscarded || session.discardedLine == nil {
+            let prefix: [ChessMove]
+            switch history.cursor {
+            case .ply(let n): prefix = Array(game.plies.prefix(n + 1).map(\.move))
+            case .opening: prefix = []
+            case .live: prefix = game.plies.map(\.move)
+            }
+            session.storeDiscarded(
+                session.snapshotDiscarded(
+                    openingFEN: game.openingFEN,
+                    prefix: prefix,
+                    suffix: pending.suffix
+                )
+            )
+        }
+
+        let capturedParent = session.documentID
+        let capturedFork = pending.forkPlyIndex
+        let capturedTitle = session.title
+        playCommittedMoveOnLiveLine(pending.move, truncateBy: pending.suffix.count) {
+            if let parentID = capturedParent {
+                let newID = UUID()
+                session.noteForkCommitted(
+                    newID: newID,
+                    parentID: parentID,
+                    forkPlyIndex: capturedFork,
+                    title: capturedTitle
+                )
+                let doc = GameDocument.make(
+                    from: game,
+                    id: newID,
+                    name: capturedTitle,
+                    parentID: parentID,
+                    forkPlyIndex: capturedFork
+                )
+                try? savedGames.save(doc)
+                session.markSaved(doc)
+            } else {
+                session.noteForkCommitted(
+                    newID: nil,
+                    parentID: nil,
+                    forkPlyIndex: capturedFork,
+                    title: capturedTitle
+                )
+            }
+        }
+    }
+
+    private func playCommittedMoveOnLiveLine(
+        _ move: ChessMove,
+        truncateBy suffixCount: Int,
+        onApplied: @escaping () -> Void
+    ) {
+        suppressCutSceneTriggers = true
+        inspectProbe = nil
+        history.pendingPromotion = nil
+        history.returnToLive(in: game)
+        if suffixCount > 0 {
+            let undone = game.undo(plies: suffixCount)
+            if undone != suffixCount {
+                savedGames.report("Could not fork from this position.")
+                DispatchQueue.main.async { suppressCutSceneTriggers = false }
+                return
+            }
+            cutSceneLog.removeAll { $0.plyIndex >= game.plies.count }
+        }
+        game.clearSelection()
+        isApplyingCommittedMove = true
+        DispatchQueue.main.async {
+            suppressCutSceneTriggers = false
+            apply(move, to: game)
+            onApplied()
+            isApplyingCommittedMove = false
+        }
+    }
+
+    private func apply(_ move: ChessMove, to game: ChessGame) {
+        game.tap(move.from)
+        game.tap(move.to)
+        if let promotion = move.promotion {
+            game.promote(to: promotion)
+        }
+    }
+
+    private func replaceGame(_ replacement: GameReplacement) {
+        if isApplyingCommittedMove { return }
+        switch replacement {
+        case .fen(let notation):
+            do {
+                try ChessGame.validateFEN(notation)
+            } catch {
+                fenSheetError = error.localizedDescription
+                return
+            }
+        case .document(let document):
+            do {
+                try ChessGame.validateFEN(document.openingFEN)
+            } catch {
+                savedGames.report("This game’s opening FEN is invalid.")
+                return
+            }
+        default:
+            break
+        }
+
+        if session.isDirty {
+            pendingReplacement = replacement
+            abandonPrompt = .abandon
+            return
+        }
+        applyReplacement(replacement)
+    }
+
+    private func applyReplacement(_ replacement: GameReplacement) {
+        if replay.isPlaying { replay.stop(in: game) }
+        inspectProbe = nil
+        history.returnToLive(in: game)
+        suppressCutSceneTriggers = true
+        dismissLiveCutScenes()
+        switch replacement {
+        case .reset:
+            game.reset()
+            session.noteNewGame(title: "New game", openingFEN: OpeningSnapshot.standardFEN)
+        case .preset(let preset):
+            game.load(preset)
+            session.noteNewGame(title: preset.displayName, openingFEN: game.openingFEN)
+        case .fen(let notation):
+            try? game.load(fen: notation)
+            session.noteNewGame(title: "Position", openingFEN: game.openingFEN)
+        case .stored(let stored):
+            game.load(stored)
+            session.noteLoadedShelf(
+                name: stored.name,
+                moves: stored.moves,
+                openingFEN: OpeningSnapshot.standardFEN
+            )
+        case .document(let document):
+            do {
+                try game.load(openingFEN: document.openingFEN, moves: try document.decodedMoves())
+                session.noteLoadedDocument(document)
+            } catch is GameLoadError {
+                session.noteLoadedDocument(document)
+                session.noteContentChanged(
+                    openingFEN: game.openingFEN,
+                    moves: game.plies.map(\.move),
+                    title: document.name
+                )
+                savedGames.report("Loaded up to the last legal move.")
+            } catch {
+                savedGames.report(error.localizedDescription)
+            }
+        }
+        cutSceneLog = CutSceneEvent.derived(from: game.plies)
+        DispatchQueue.main.async { suppressCutSceneTriggers = false }
+    }
+
+    private func dismissLiveCutScenes() {
         checkCutScene = nil
         firstCaptureCutScene = nil
         queenDownCutScene = nil
         enPassantOpportunityCutScene = nil
         enPassantCaptureCutScene = nil
+    }
 
-        game.load(stored)
+    private func saveCurrentGame(asCopy: Bool) {
+        let id = asCopy || session.documentID == nil ? UUID() : session.documentID!
+        let createdAt = (!asCopy ? savedGames.document(id: id)?.createdAt : nil) ?? Date()
+        let document = GameDocument.make(
+            from: game,
+            id: id,
+            name: session.title.isEmpty ? Self.defaultGameTitle() : session.title,
+            createdAt: createdAt,
+            parentID: asCopy ? nil : session.parentID,
+            forkPlyIndex: asCopy ? nil : session.forkPlyIndex
+        )
+        do {
+            try savedGames.save(document)
+            session.markSaved(document)
+        } catch {
+            savedGames.report(error.localizedDescription)
+        }
+    }
 
-        cutSceneLog = CutSceneEvent.derived(from: game.plies)
-        suppressCutSceneTriggers = false
+    private func scheduleAutosave() {
+        guard session.documentID != nil, session.isDirty else { return }
+        autosaveTask?.cancel()
+        autosaveTask = Task {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            saveCurrentGame(asCopy: false)
+        }
+    }
+
+    private func requestRestoreDiscarded() {
+        guard session.discardedLine != nil else { return }
+        if session.documentID != nil {
+            restoreDiscardedPrompt = true
+        } else if let discarded = session.discardedLine {
+            restoreDiscardedLine(discarded)
+        }
+    }
+
+    private func restoreDiscardedLine(_ discarded: DiscardedLine) {
+        if replay.isPlaying { replay.stop(in: game) }
+        suppressCutSceneTriggers = true
+        inspectProbe = nil
+        history.returnToLive(in: game)
+        do {
+            try game.load(openingFEN: discarded.openingFEN, moves: discarded.prefix + discarded.suffix)
+            cutSceneLog = CutSceneEvent.derived(from: game.plies)
+            session.restoreIdentity(from: discarded)
+            session.noteContentChanged(
+                openingFEN: game.openingFEN,
+                moves: game.plies.map(\.move),
+                title: discarded.title
+            )
+            session.clearDiscarded()
+        } catch {
+            savedGames.report(error.localizedDescription)
+        }
+        DispatchQueue.main.async { suppressCutSceneTriggers = false }
+    }
+
+    private static func defaultGameTitle() -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return "Game \(formatter.string(from: Date()))"
     }
 
     private func record(_ kind: CutSceneEvent.Kind) {
@@ -382,6 +877,70 @@ struct ContentView: View {
     }
 
     @ViewBuilder
+    private var gameStage: some View {
+        ZStack {
+            Color(.systemBackground)
+            if !isPieceGalleryPresented {
+                primaryColumn
+            }
+        }
+    }
+
+    private var primaryColumn: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                board
+                    .overlay(alignment: .bottom) { replayOverlay }
+                    .animation(.snappy(duration: 0.24), value: replay.progress)
+                controlBar
+            }
+            .padding(24)
+            .toolbar(.hidden, for: .navigationBar)
+            .inspector(isPresented: isHistoryPresented) {
+                historyPane
+                    .inspectorColumnWidth(min: 260, ideal: 304, max: 380)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var replayOverlay: some View {
+        if let progress = replay.progress {
+            ReplayBadge(progress: progress) {
+                replay.stop(in: game)
+            }
+            .padding(.bottom, 18)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    private var historyPane: some View {
+        MoveHistoryPane(
+            game: game,
+            history: history,
+            session: session,
+            replay: replay,
+            savedGames: savedGames,
+            canSave: true,
+            onInspect: inspect,
+            onReturnToLive: returnToLive,
+            onSave: { saveCurrentGame(asCopy: false) },
+            onSaveAs: { saveCurrentGame(asCopy: true) },
+            onRestoreDiscarded: requestRestoreDiscarded,
+            onOpenSibling: { replaceGame(.document($0)) }
+        )
+    }
+
+    private var windowAspectReader: some View {
+        GeometryReader { geo in
+            Color.clear.preference(
+                key: WindowAspectKey.self,
+                value: geo.size.width > geo.size.height
+            )
+        }
+    }
+
+    @ViewBuilder
     private var board: some View {
         switch boardDimension {
         case .threeD:
@@ -392,7 +951,10 @@ struct ContentView: View {
                 threatDisplayMode: threatDisplayMode,
                 boardOpacity: Float(boardOpacity),
                 piecePalette: piecePalette,
-                isLightLoose: isLightLoose
+                isLightLoose: isLightLoose,
+                onTap: handleBoardTap,
+                inspectSelectedSquare: history.isInspecting ? history.selectedSquare : nil,
+                inspectLegalTargets: history.isInspecting ? history.legalTargets : nil
             )
             .aspectRatio(16.0 / 10.0, contentMode: .fit)
             .frame(maxWidth: 1100)
@@ -401,7 +963,10 @@ struct ContentView: View {
             ChessBoardView(
                 game: game,
                 threatDisplayMode: threatDisplayMode,
-                piecePalette: piecePalette
+                piecePalette: piecePalette,
+                onTap: handleBoardTap,
+                selectedSquare: history.isInspecting ? history.selectedSquare : game.selectedSquare,
+                legalTargets: history.isInspecting ? history.legalTargets : game.legalTargets
             )
                 .aspectRatio(1, contentMode: .fit)
                 .frame(maxWidth: 720, maxHeight: 720)
@@ -474,13 +1039,14 @@ struct ContentView: View {
 
             Menu {
                 Button {
-                    undo(plies: 1)
+                    undoFromMenu(plies: 1)
                 } label: {
                     Label("Undo last move", systemImage: "arrow.uturn.backward")
                 }
+                .keyboardShortcut("z", modifiers: .command)
 
                 Button {
-                    undo(plies: 2)
+                    undoFromMenu(plies: 2)
                 } label: {
                     Label("Undo local turn (2 moves)", systemImage: "arrow.uturn.backward.circle")
                 }
@@ -488,9 +1054,17 @@ struct ContentView: View {
             } label: {
                 controlIcon("arrow.uturn.backward", tint: .orange)
             }
-            .disabled(!game.canUndoTurn)
+            .disabled(!canUndoFromMenu)
             .accessibilityLabel("Undo")
             .accessibilityHint("Choose to undo the last move or the last local turn")
+
+            Button {
+                isHistoryPresented.wrappedValue.toggle()
+            } label: {
+                controlIcon("list.bullet.rectangle", tint: .indigo, isActive: isHistoryPresented.wrappedValue)
+            }
+            .accessibilityLabel("Move history")
+            .accessibilityHint("Shows or hides the move list")
 
             Menu {
                 Section {
@@ -504,7 +1078,7 @@ struct ContentView: View {
                 Section("Jump to a position") {
                     ForEach(PositionPreset.allCases) { preset in
                         Button {
-                            game.load(preset)
+                            replaceGame(.preset(preset))
                         } label: {
                             Label(
                                 preset.displayName,
@@ -517,7 +1091,7 @@ struct ContentView: View {
                 }
                 Section {
                     Button(role: .destructive) {
-                        game.reset()
+                        replaceGame(.reset)
                     } label: {
                         Label("Restart game", systemImage: "arrow.counterclockwise")
                     }
@@ -985,6 +1559,9 @@ private struct ChessBoardView: View {
     @ObservedObject var game: ChessGame
     let threatDisplayMode: ThreatDisplayMode
     let piecePalette: PiecePalette
+    var onTap: ((Square) -> Void)? = nil
+    var selectedSquare: Square? = nil
+    var legalTargets: Set<Square>? = nil
 
     var body: some View {
         let visibleCorridors = game.threatCorridors(for: threatDisplayMode)
@@ -997,8 +1574,8 @@ private struct ChessBoardView: View {
                         ChessSquareView(
                             square: square,
                             piece: game.piece(at: square),
-                            isSelected: game.selectedSquare == square,
-                            isLegalTarget: game.legalTargets.contains(square),
+                            isSelected: (selectedSquare ?? game.selectedSquare) == square,
+                            isLegalTarget: (legalTargets ?? game.legalTargets).contains(square),
                             isLastMove: game.lastMove?.from == square || game.lastMove?.to == square,
                             isCheckedKing: game.isKingInCheck(at: square),
                             isCandidate: game.candidatePulseSquares.contains(square),
@@ -1007,7 +1584,7 @@ private struct ChessBoardView: View {
                                 marksThreatenedPiece($0, at: square)
                             }
                         ) {
-                            game.tap(square)
+                            (onTap ?? { game.tap($0) })(square)
                         }
                     }
                 }
@@ -1241,22 +1818,23 @@ private struct PromotionPicker: View {
 }
 
 private struct FENTransferSheet: View {
-    @ObservedObject var game: ChessGame
+    let currentFEN: String
+    var errorMessage: String?
+    let onLoad: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var input = ""
-    @State private var errorMessage: String?
     @State private var copied = false
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Current position") {
-                    Text(game.fen)
+                    Text(currentFEN)
                         .font(.system(.footnote, design: .monospaced))
                         .textSelection(.enabled)
 
                     Button {
-                        UIPasteboard.general.string = game.fen
+                        UIPasteboard.general.string = currentFEN
                         copied = true
                     } label: {
                         Label(copied ? "FEN copied" : "Copy FEN", systemImage: copied ? "checkmark" : "doc.on.doc")
@@ -1273,11 +1851,10 @@ private struct FENTransferSheet: View {
                     HStack {
                         Button("Paste") {
                             input = UIPasteboard.general.string ?? ""
-                            errorMessage = nil
                         }
                         Spacer()
                         Button("Load position") {
-                            loadPosition()
+                            onLoad(input)
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -1304,18 +1881,26 @@ private struct FENTransferSheet: View {
             }
         }
         .onAppear {
-            input = game.fen
+            input = currentFEN
         }
     }
+}
 
-    private func loadPosition() {
-        do {
-            try game.load(fen: input)
-            dismiss()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+private struct WindowAspectKey: PreferenceKey {
+    static let defaultValue = true
+    static func reduce(value: inout Bool, nextValue: () -> Bool) {
+        value = nextValue()
     }
+}
+
+private enum AbandonPrompt {
+    case abandon
+}
+
+private struct PendingForkCommit {
+    let move: ChessMove
+    let suffix: [ChessMove]
+    let forkPlyIndex: Int?
 }
 
 private struct CandidatePulse2D: View {

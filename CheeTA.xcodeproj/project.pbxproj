@@ -26,6 +26,13 @@
 		100000000000000000000017 /* GameBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* GameBrowserView.swift */; };
 		100000000000000000000018 /* PieceGalleryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000020 /* PieceGalleryView.swift */; };
 		100000000000000000000019 /* ChessPieceMeshes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000021 /* ChessPieceMeshes.swift */; };
+		100000000000000000000020 /* PlyNotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000022 /* PlyNotation.swift */; };
+		100000000000000000000021 /* HistoryController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000023 /* HistoryController.swift */; };
+		100000000000000000000022 /* GameSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000024 /* GameSession.swift */; };
+		100000000000000000000023 /* GameDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000025 /* GameDocument.swift */; };
+		100000000000000000000024 /* SavedGameStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000026 /* SavedGameStore.swift */; };
+		100000000000000000000025 /* MoveHistoryPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000027 /* MoveHistoryPane.swift */; };
+		100000000000000000000026 /* HistoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000028 /* HistoryTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,6 +67,13 @@
 		200000000000000000000019 /* GameBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameBrowserView.swift; sourceTree = "<group>"; };
 		200000000000000000000020 /* PieceGalleryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PieceGalleryView.swift; sourceTree = "<group>"; };
 		200000000000000000000021 /* ChessPieceMeshes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChessPieceMeshes.swift; sourceTree = "<group>"; };
+		200000000000000000000022 /* PlyNotation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlyNotation.swift; sourceTree = "<group>"; };
+		200000000000000000000023 /* HistoryController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryController.swift; sourceTree = "<group>"; };
+		200000000000000000000024 /* GameSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameSession.swift; sourceTree = "<group>"; };
+		200000000000000000000025 /* GameDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameDocument.swift; sourceTree = "<group>"; };
+		200000000000000000000026 /* SavedGameStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedGameStore.swift; sourceTree = "<group>"; };
+		200000000000000000000027 /* MoveHistoryPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoveHistoryPane.swift; sourceTree = "<group>"; };
+		200000000000000000000028 /* HistoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -110,6 +124,12 @@
 				200000000000000000000019 /* GameBrowserView.swift */,
 				200000000000000000000020 /* PieceGalleryView.swift */,
 				200000000000000000000018 /* GameLibrary.swift */,
+				200000000000000000000022 /* PlyNotation.swift */,
+				200000000000000000000023 /* HistoryController.swift */,
+				200000000000000000000024 /* GameSession.swift */,
+				200000000000000000000025 /* GameDocument.swift */,
+				200000000000000000000026 /* SavedGameStore.swift */,
+				200000000000000000000027 /* MoveHistoryPane.swift */,
 				200000000000000000000005 /* Assets.xcassets */,
 			);
 			path = CheeTA;
@@ -119,6 +139,7 @@
 			isa = PBXGroup;
 			children = (
 				200000000000000000000006 /* ChessGameTests.swift */,
+				200000000000000000000028 /* HistoryTests.swift */,
 			);
 			path = CheeTATests;
 			sourceTree = "<group>";
@@ -256,6 +277,12 @@
 				100000000000000000000017 /* GameBrowserView.swift in Sources */,
 				100000000000000000000018 /* PieceGalleryView.swift in Sources */,
 				100000000000000000000019 /* ChessPieceMeshes.swift in Sources */,
+				100000000000000000000020 /* PlyNotation.swift in Sources */,
+				100000000000000000000021 /* HistoryController.swift in Sources */,
+				100000000000000000000022 /* GameSession.swift in Sources */,
+				100000000000000000000023 /* GameDocument.swift in Sources */,
+				100000000000000000000024 /* SavedGameStore.swift in Sources */,
+				100000000000000000000025 /* MoveHistoryPane.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -264,6 +291,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				100000000000000000000006 /* ChessGameTests.swift in Sources */,
+				100000000000000000000026 /* HistoryTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -124,6 +124,33 @@ struct ReplayFrame: Hashable, Sendable {
     let board: [Square: Piece]
     let move: ChessMove?
     let playerToMove: Player
+    let status: PositionStatus
+}
+
+/// The position history is measured from. Reset, preset, and FEN load
+/// replace this; undo never does.
+struct OpeningSnapshot: Hashable, Sendable {
+    let board: [Square: Piece]
+    let playerToMove: Player
+    let castlingRights: CastlingRights
+    let enPassantTarget: Square?
+    let halfmoveClock: Int
+    let fullmoveNumber: Int
+
+    /// Pinned by `testStartingPositionExportsStandardFEN`.
+    static let standardFEN =
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
+    var fen: String {
+        ChessGame.makeFEN(
+            board: board,
+            currentPlayer: playerToMove,
+            castlingRights: castlingRights,
+            enPassantTarget: enPassantTarget,
+            halfmoveClock: halfmoveClock,
+            fullmoveNumber: fullmoveNumber
+        )
+    }
 }
 
 struct ChessMove: Hashable, Sendable {

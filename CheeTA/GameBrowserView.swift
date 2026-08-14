@@ -1,35 +1,71 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// A shelf of complete games. Each card shows the position a game ended in,
 /// so the shelf is browsable by shape rather than by title alone.
+enum BrowserCollection: String, CaseIterable, Identifiable {
+    case saved = "Your games"
+    case shelf = "Shelf"
+
+    var id: Self { self }
+}
+
 struct GameBrowserView: View {
     @ObservedObject var library: GameLibrary
+    @ObservedObject var savedGames: SavedGameStore
     let palette: PiecePalette
-    let select: (StoredGame) -> Void
+    let select: (BrowserPick) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var collection: BrowserCollection = .saved
+    @State private var importing = false
 
     private let columns = [GridItem(.adaptive(minimum: 210), spacing: 16)]
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 16) {
-                    ForEach(library.games) { game in
-                        Button {
-                            select(game)
-                            dismiss()
-                        } label: {
-                            card(for: game)
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    if library.isGenerating {
-                        placeholder
+            VStack(spacing: 0) {
+                Picker("Collection", selection: $collection) {
+                    ForEach(BrowserCollection.allCases) { item in
+                        Text(item.rawValue).tag(item)
                     }
                 }
-                .padding(20)
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 16) {
+                        switch collection {
+                        case .saved:
+                            ForEach(savedGames.documents) { document in
+                                savedCard(document)
+                            }
+                            if savedGames.documents.isEmpty {
+                                Text("Saved games appear here after you tap Save in the move list.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.top, 40)
+                            }
+                        case .shelf:
+                            ForEach(library.games) { game in
+                                Button {
+                                    select(.shelf(game))
+                                    dismiss()
+                                } label: {
+                                    card(for: game)
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            if library.isGenerating {
+                                placeholder
+                            }
+                        }
+                    }
+                    .padding(20)
+                }
             }
             .navigationTitle("Games")
             .navigationBarTitleDisplayMode(.inline)
@@ -39,16 +75,106 @@ struct GameBrowserView: View {
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        Task { await library.regenerate() }
-                    } label: {
-                        Label("New shelf", systemImage: "arrow.clockwise")
+                    if collection == .shelf {
+                        Button {
+                            Task { await library.regenerate() }
+                        } label: {
+                            Label("New shelf", systemImage: "arrow.clockwise")
+                        }
+                        .disabled(library.isGenerating)
+                    } else {
+                        Button {
+                            importing = true
+                        } label: {
+                            Label("Import", systemImage: "square.and.arrow.down")
+                        }
                     }
-                    .disabled(library.isGenerating)
                 }
             }
+            .fileImporter(
+                isPresented: $importing,
+                allowedContentTypes: [.json],
+                allowsMultipleSelection: false
+            ) { result in
+                importFile(result)
+            }
         }
-        .task { await library.generateIfNeeded() }
+        .task {
+            await library.generateIfNeeded()
+            await savedGames.loadAll()
+        }
+    }
+
+    private func savedCard(_ document: GameDocument) -> some View {
+        let board = (try? ChessGame.board(fromFEN: document.finalFEN)) ?? [:]
+        return Button {
+            select(.saved(document))
+            dismiss()
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                MiniBoardView(board: board, palette: palette)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(.black.opacity(0.15), lineWidth: 1)
+                    }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(document.name)
+                        .font(.headline)
+                        .lineLimit(1)
+
+                    Text(document.result.resultText)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Text("\(document.moves.count) plies · \(document.captureCount) captures")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(12)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            ShareLink(item: savedGames.fileURL(for: document.id))
+            Button("Delete", role: .destructive) {
+                try? savedGames.delete(id: document.id)
+            }
+        }
+        .accessibilityHint("Loads this saved game")
+    }
+
+    private func importFile(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let error):
+            savedGames.report(error.localizedDescription)
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let data = try Data(contentsOf: url)
+                guard data.count <= SavedGameStore.maxFileBytes else {
+                    throw GameDocumentError.fileTooLarge
+                }
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                var document = try decoder.decode(GameDocument.self, from: data)
+                guard document.schemaVersion == GameDocument.currentSchemaVersion else {
+                    throw GameDocumentError.unsupportedSchema(document.schemaVersion)
+                }
+                _ = try document.decodedMoves()
+                document.id = UUID()
+                document.parentID = nil
+                document.forkPlyIndex = nil
+                document.updatedAt = Date()
+                try savedGames.save(document)
+            } catch {
+                savedGames.report(error.localizedDescription)
+            }
+        }
     }
 
     private func card(for game: StoredGame) -> some View {

@@ -28,12 +28,19 @@ let package = Package(
                 "PieceGalleryView.swift",
                 "QueenDownCutSceneView.swift",
                 "RealityChessBoardView.swift",
-                "ReplayControls.swift"
+                "ReplayControls.swift",
+                "GameSession.swift",
+                "SavedGameStore.swift",
+                "MoveHistoryPane.swift",
+                "ChessPieceMeshes.swift"
             ],
             sources: [
                 "ChessTypes.swift",
                 "ChessGame.swift",
-                "GameLibrary.swift"
+                "GameLibrary.swift",
+                "PlyNotation.swift",
+                "GameDocument.swift",
+                "HistoryController.swift"
             ]
         ),
         .testTarget(

@@ -19,6 +19,8 @@ final class ReplayPlayer: ObservableObject {
         let step: Int
         let total: Int
         let title: String
+        /// nil only for the true opening frame (start == 0, step == 0).
+        let plyIndex: Int?
     }
 
     private var task: Task<Void, Never>?
@@ -29,6 +31,7 @@ final class ReplayPlayer: ObservableObject {
         _ steps: [ReplayStep],
         title: String,
         in game: ChessGame,
+        replayStartIndex: Int = 0,
         secondsPerFrame: Double = 0.55,
         secondsPerCutScene: Double = 2.2
     ) {
@@ -51,10 +54,17 @@ final class ReplayPlayer: ObservableObject {
                 case .position(let frame):
                     self?.activeCutScene = nil
                     game.show(frame)
+                    let plyIndex: Int?
+                    if shown == 0 {
+                        plyIndex = replayStartIndex == 0 ? nil : replayStartIndex - 1
+                    } else {
+                        plyIndex = replayStartIndex + shown - 1
+                    }
                     self?.progress = Progress(
                         step: shown,
                         total: positionCount - 1,
-                        title: title
+                        title: title,
+                        plyIndex: plyIndex
                     )
                     shown += 1
 
@@ -80,6 +90,7 @@ final class ReplayPlayer: ObservableObject {
     }
 
     func stop(in game: ChessGame) {
+        guard isPlaying else { return }
         task?.cancel()
         task = nil
         finish(in: game)
