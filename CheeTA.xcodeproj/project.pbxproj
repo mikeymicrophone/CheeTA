@@ -25,6 +25,7 @@
 		100000000000000000000016 /* GameLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000018 /* GameLibrary.swift */; };
 		100000000000000000000017 /* GameBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* GameBrowserView.swift */; };
 		100000000000000000000018 /* PieceGalleryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000020 /* PieceGalleryView.swift */; };
+		100000000000000000000019 /* ChessPieceMeshes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000021 /* ChessPieceMeshes.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -58,6 +59,7 @@
 		200000000000000000000018 /* GameLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameLibrary.swift; sourceTree = "<group>"; };
 		200000000000000000000019 /* GameBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameBrowserView.swift; sourceTree = "<group>"; };
 		200000000000000000000020 /* PieceGalleryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PieceGalleryView.swift; sourceTree = "<group>"; };
+		200000000000000000000021 /* ChessPieceMeshes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChessPieceMeshes.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -97,6 +99,7 @@
 				200000000000000000000003 /* ChessTypes.swift */,
 				200000000000000000000004 /* ChessGame.swift */,
 				200000000000000000000010 /* RealityChessBoardView.swift */,
+				200000000000000000000021 /* ChessPieceMeshes.swift */,
 				200000000000000000000011 /* CheckCutSceneView.swift */,
 				200000000000000000000012 /* FirstCaptureCutSceneView.swift */,
 				200000000000000000000013 /* ReplayControls.swift */,
@@ -252,6 +255,7 @@
 				100000000000000000000016 /* GameLibrary.swift in Sources */,
 				100000000000000000000017 /* GameBrowserView.swift in Sources */,
 				100000000000000000000018 /* PieceGalleryView.swift in Sources */,
+				100000000000000000000019 /* ChessPieceMeshes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

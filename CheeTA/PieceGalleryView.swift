@@ -11,101 +11,138 @@ struct PieceGalleryView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedKind: PieceKind = .pawn
     @State private var selectedPlayer: Player = .white
+    @State private var inspectionEpoch = 0
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                Picker("Side", selection: $selectedPlayer) {
-                    Text("White").tag(Player.white)
-                    Text("Black").tag(Player.black)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 24)
-                .padding(.top, 14)
-
+            ZStack {
                 PieceInspectionScene(
                     piece: Piece(kind: selectedKind, player: selectedPlayer),
-                    palette: palette
+                    palette: palette,
+                    resetEpoch: inspectionEpoch
                 )
-                .padding(.horizontal, 18)
-                .padding(.top, 16)
+                .ignoresSafeArea(edges: .bottom)
 
-                VStack(spacing: 4) {
-                    Text(selectedKind.displayName.uppercased())
-                        .font(.system(size: 25, weight: .black, design: .rounded))
-                        .tracking(1.6)
-
-                    Text(selectedKind.galleryDescription)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 450)
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 16)
-                .padding(.bottom, 10)
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(PieceKind.galleryOrder, id: \.self) { kind in
-                            Button {
-                                withAnimation(.snappy(duration: 0.18)) {
-                                    selectedKind = kind
-                                }
-                            } label: {
-                                VStack(spacing: 5) {
-                                    Text(Piece(kind: kind, player: selectedPlayer).symbol)
-                                        .font(.system(size: 27, design: .serif))
-                                    Text(kind.shortName)
-                                        .font(.caption2.weight(.bold))
-                                }
-                                .foregroundStyle(kind == selectedKind ? .white : palette.pieceColor(for: selectedPlayer))
-                                .frame(width: 68, height: 62)
-                                .background {
-                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                        .fill(kind == selectedKind
-                                            ? AnyShapeStyle(palette.pieceColor(for: selectedPlayer).gradient)
-                                            : AnyShapeStyle(.thinMaterial))
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(kind.displayName)
-                        }
+                VStack(spacing: 0) {
+                    Picker("Side", selection: $selectedPlayer) {
+                        Text("White").tag(Player.white)
+                        Text("Black").tag(Player.black)
                     }
+                    .pickerStyle(.segmented)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+
+                    Spacer(minLength: 0)
+                        .allowsHitTesting(false)
+
+                    HStack(spacing: 12) {
+                        Label("Drag to tumble", systemImage: "rotate.3d")
+                        Label("Twist to roll", systemImage: "rotate.right")
+                        Label("Pinch to zoom", systemImage: "arrow.up.left.and.arrow.down.right")
+
+                        Spacer(minLength: 0)
+
+                        Button {
+                            inspectionEpoch += 1
+                        } label: {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.caption.weight(.bold))
+                                .frame(width: 30, height: 30)
+                                .background(.white.opacity(0.14), in: Circle())
+                        }
+                        .accessibilityLabel("Reset piece view")
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(.black.opacity(0.48), in: Capsule())
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+
+                    VStack(spacing: 4) {
+                        Text(selectedKind.displayName.uppercased())
+                            .font(.system(size: 25, weight: .black, design: .rounded))
+                            .tracking(1.6)
+
+                        Text(selectedKind.galleryDescription)
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.72))
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 450)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+                    .padding(.bottom, 10)
+                    .allowsHitTesting(false)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(PieceKind.galleryOrder, id: \.self) { kind in
+                                Button {
+                                    withAnimation(.snappy(duration: 0.18)) {
+                                        selectedKind = kind
+                                    }
+                                } label: {
+                                    VStack(spacing: 5) {
+                                        Text(Piece(kind: kind, player: selectedPlayer).symbol)
+                                            .font(.system(size: 27, design: .serif))
+                                        Text(kind.shortName)
+                                            .font(.caption2.weight(.bold))
+                                    }
+                                    .foregroundStyle(kind == selectedKind ? .white : palette.pieceColor(for: selectedPlayer))
+                                    .frame(width: 68, height: 62)
+                                    .background {
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .fill(kind == selectedKind
+                                                ? AnyShapeStyle(palette.pieceColor(for: selectedPlayer).gradient)
+                                                : AnyShapeStyle(.thinMaterial))
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(kind.displayName)
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 10)
+                    }
+                    .background(.ultraThinMaterial)
                 }
-                .background(.ultraThinMaterial)
             }
-            .background(Color(.systemBackground))
+            .background(Color.black)
             .navigationTitle("Piece Gallery")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done", action: dismiss.callAsFunction)
                 }
             }
         }
+        .presentationSizing(.page)
         .accessibilityLabel("Close-up chess piece gallery")
     }
 }
 
-/// A free-standing studio plinth. Drag to rotate the actual model; pinch to
-/// inspect its finish and small silhouette details.
+/// A free-standing studio plinth. Drag to tumble the model on any axis;
+/// pinch to inspect its finish; twist with two fingers to roll.
+///
+/// Gestures write the pivot entity directly. Pushing every drag sample
+/// through `@State` would rebuild this view — and RealityView's update —
+/// sixty times a second.
 private struct PieceInspectionScene: View {
     let piece: Piece
     let palette: PiecePalette
+    let resetEpoch: Int
 
-    @State private var yaw: Float = -0.42
-    @State private var pitch: Float = -0.13
-    @State private var scale: Float = 1
-    @State private var startYaw: Float = -0.42
-    @State private var startPitch: Float = -0.13
-    @State private var startScale: Float = 1
-    @State private var isDragging = false
-    @State private var isPinching = false
+    @State private var rig = InspectionRig()
 
     private let rootName = "piece-inspection-root"
+    private let pivotName = "inspection-pivot"
+    private let rimName = "inspection-rim"
+    private static let pivotHeight: Float = 0.68
 
     var body: some View {
         RealityView { content in
@@ -126,18 +163,19 @@ private struct PieceInspectionScene: View {
 
             let rim = ModelEntity(
                 mesh: .generateCylinder(height: 0.026, radius: 1.08),
-                materials: [SimpleMaterial(
-                    color: UIColor(palette.pieceColor(for: piece.player)).withAlphaComponent(0.72),
-                    roughness: .float(0.2),
-                    isMetallic: true
-                )]
+                materials: [rimMaterial]
             )
+            rim.name = rimName
             rim.position.y = 0.015
             root.addChild(rim)
 
-            let model = RealityBoardScene.makePiece(piece, palette: palette)
-            model.name = "inspection-piece"
-            root.addChild(model)
+            let pivot = Entity()
+            pivot.name = pivotName
+            pivot.position.y = Self.pivotHeight
+            root.addChild(pivot)
+            rig.attach(pivot)
+            syncPiece(in: pivot)
+            rig.apply()
 
             let keyLight = Entity()
             keyLight.position = [-2.2, 3.4, 2.8]
@@ -163,74 +201,153 @@ private struct PieceInspectionScene: View {
                 far: 30,
                 fieldOfViewInDegrees: 31
             )
-            camera.look(at: [0, 0.54, 0], from: [0, 1.0, 4.05], relativeTo: nil)
+            camera.look(at: [0, 0.62, 0], from: [0, 1.08, 4.15], relativeTo: nil)
             content.add(camera)
             content.camera = .virtual
 
-            applyTransform(to: root)
         } update: { content in
             guard let root = content.entities.first(where: { $0.name == rootName }) else { return }
-            root.children.first(where: { $0.name == "inspection-piece" })?.removeFromParent()
-            let model = RealityBoardScene.makePiece(piece, palette: palette)
-            model.name = "inspection-piece"
-            root.addChild(model)
-            applyTransform(to: root)
+            syncRim(on: root)
+            guard let pivot = root.findEntity(named: pivotName) else { return }
+            rig.attach(pivot)
+            syncPiece(in: pivot)
+            rig.apply()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
             RadialGradient(
                 colors: [palette.pieceColor(for: piece.player).opacity(0.36), Color.black.opacity(0.96)],
                 center: .top,
                 startRadius: 10,
-                endRadius: 420
+                endRadius: 720
             )
         )
-        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .stroke(.white.opacity(0.16), lineWidth: 1)
+        .onChange(of: resetEpoch) {
+            rig.reset()
         }
-        .aspectRatio(1.35, contentMode: .fit)
         .gesture(
             DragGesture(minimumDistance: 8)
                 .onChanged { value in
-                    if !isDragging {
-                        isDragging = true
-                        startYaw = yaw
-                        startPitch = pitch
+                    if !rig.isDragging {
+                        rig.isDragging = true
+                        rig.startOrientation = rig.orientation
                     }
-                    yaw = startYaw - Float(value.translation.width) * 0.012
-                    pitch = min(max(startPitch + Float(value.translation.height) * 0.008, -0.55), 0.30)
+                    rig.orientation = dragOrientation(from: value.translation)
+                    rig.apply()
                 }
                 .onEnded { value in
-                    yaw = startYaw - Float(value.translation.width) * 0.012
-                    pitch = min(max(startPitch + Float(value.translation.height) * 0.008, -0.55), 0.30)
-                    isDragging = false
+                    rig.orientation = dragOrientation(from: value.translation)
+                    rig.isDragging = false
+                    rig.apply()
                 }
         )
         .simultaneousGesture(
             MagnificationGesture()
                 .onChanged { value in
-                    if !isPinching {
-                        isPinching = true
-                        startScale = scale
+                    if !rig.isPinching {
+                        rig.isPinching = true
+                        rig.startScale = rig.scale
                     }
-                    scale = min(max(startScale * Float(value), 0.72), 1.65)
+                    rig.scale = min(max(rig.startScale * Float(value), 0.72), 2.2)
+                    rig.apply()
                 }
                 .onEnded { value in
-                    scale = min(max(startScale * Float(value), 0.72), 1.65)
-                    isPinching = false
+                    rig.scale = min(max(rig.startScale * Float(value), 0.72), 2.2)
+                    rig.isPinching = false
+                    rig.apply()
+                }
+        )
+        .simultaneousGesture(
+            RotationGesture()
+                .onChanged { angle in
+                    if !rig.isRolling {
+                        rig.isRolling = true
+                        rig.startOrientation = rig.orientation
+                    }
+                    rig.orientation = rollOrientation(from: angle)
+                    rig.apply()
+                }
+                .onEnded { angle in
+                    rig.orientation = rollOrientation(from: angle)
+                    rig.isRolling = false
+                    rig.apply()
                 }
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Close-up \(piece.player.displayName) \(piece.kind.displayName)")
-        .accessibilityHint("Drag to rotate the piece. Pinch to zoom.")
+        .accessibilityHint("Drag to tumble the piece on any axis. Twist with two fingers to roll. Pinch to zoom.")
     }
 
-    private func applyTransform(to root: Entity) {
-        let yawRotation = simd_quatf(angle: yaw, axis: [0, 1, 0])
-        let pitchRotation = simd_quatf(angle: pitch, axis: [1, 0, 0])
-        root.orientation = yawRotation * pitchRotation
-        root.scale = SIMD3<Float>(repeating: scale)
+    private var pieceToken: String {
+        "\(piece.player.rawValue)-\(piece.kind.rawValue)"
+    }
+
+    private var rimMaterial: SimpleMaterial {
+        SimpleMaterial(
+            color: UIColor(palette.pieceColor(for: piece.player)).withAlphaComponent(0.72),
+            roughness: .float(0.2),
+            isMetallic: true
+        )
+    }
+
+    private func syncPiece(in pivot: Entity) {
+        if pivot.children.first?.name == pieceToken { return }
+        pivot.children.removeAll()
+        let model = RealityBoardScene.makePiece(piece, palette: palette)
+        model.name = pieceToken
+        model.position.y = -Self.pivotHeight
+        pivot.addChild(model)
+    }
+
+    private func syncRim(on root: Entity) {
+        guard let rim = root.findEntity(named: rimName) as? ModelEntity else { return }
+        let token = piece.player.rawValue
+        guard rig.rimPlayerToken != token else { return }
+        rig.rimPlayerToken = token
+        rim.model?.materials = [rimMaterial]
+    }
+
+    private func dragOrientation(from translation: CGSize) -> simd_quatf {
+        let yaw = simd_quatf(angle: -Float(translation.width) * 0.01, axis: [0, 1, 0])
+        let pitch = simd_quatf(angle: Float(translation.height) * 0.01, axis: [1, 0, 0])
+        return yaw * pitch * rig.startOrientation
+    }
+
+    private func rollOrientation(from angle: Angle) -> simd_quatf {
+        let roll = simd_quatf(angle: Float(angle.radians), axis: [0, 0, 1])
+        return roll * rig.startOrientation
+    }
+}
+
+@MainActor
+private final class InspectionRig {
+    static let homeOrientation = simd_quatf(angle: -0.42, axis: [0, 1, 0])
+        * simd_quatf(angle: -0.13, axis: [1, 0, 0])
+
+    var orientation = InspectionRig.homeOrientation
+    var scale: Float = 1
+    var startOrientation = InspectionRig.homeOrientation
+    var startScale: Float = 1
+    var isDragging = false
+    var isPinching = false
+    var isRolling = false
+    var rimPlayerToken: String?
+    private weak var pivot: Entity?
+
+    func attach(_ pivot: Entity) {
+        self.pivot = pivot
+    }
+
+    func apply() {
+        guard let pivot else { return }
+        pivot.orientation = orientation
+        pivot.scale = SIMD3<Float>(repeating: scale)
+    }
+
+    func reset() {
+        orientation = Self.homeOrientation
+        scale = 1
+        apply()
     }
 }
 
@@ -252,12 +369,12 @@ private extension PieceKind {
 
     var galleryDescription: String {
         switch self {
-        case .pawn: "A compact advance unit, clean enough to read at a glance."
-        case .knight: "A hard-edge carved horse: muzzle forward, mane down the spine."
-        case .bishop: "A crystalline mitre built from cones, a bold diagonal cut at its crown."
-        case .rook: "A squat turret with a fat footing and heavy battlements."
-        case .queen: "The most elaborate silhouette: a crown that reads from across the board."
-        case .king: "Tall, ceremonial, and intentionally more constrained than the queen."
+        case .pawn: "A turned Staunton pawn: stepped foot, slender waist, and a spherical head."
+        case .knight: "The horse of the set: a carved head on the same turned plinth as its siblings."
+        case .bishop: "A mitre with the traditional cleft, rising from a slender lathed stem."
+        case .rook: "A castle tower — flared cornice, crenellations, and a hollowed crown."
+        case .queen: "The most ornate silhouette: a coronet of pearls above a tall turned stem."
+        case .king: "The tallest piece, finished with a circlet and a cross."
         }
     }
 }

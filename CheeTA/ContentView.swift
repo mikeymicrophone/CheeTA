@@ -27,28 +27,41 @@ struct ContentView: View {
     @StateObject private var gameLibrary = GameLibrary()
 
     var body: some View {
-        VStack(spacing: 20) {
-            board
-                .overlay(alignment: .bottom) {
-                    if let progress = replay.progress {
-                        ReplayBadge(progress: progress) {
-                            replay.stop(in: game)
+        ZStack {
+            Color(.systemBackground)
+
+            // Two RealityKit scenes at once is too expensive: the board keeps
+            // rebuilding thirty-two pieces and ticking its light while the
+            // gallery tries to tumble one. Tear the game down for the visit.
+            if !isPieceGalleryPresented {
+                VStack(spacing: 20) {
+                    board
+                        .overlay(alignment: .bottom) {
+                            if let progress = replay.progress {
+                                ReplayBadge(progress: progress) {
+                                    replay.stop(in: game)
+                                }
+                                .padding(.bottom, 18)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                            }
                         }
-                        .padding(.bottom, 18)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
+                        .animation(.snappy(duration: 0.24), value: replay.progress)
+                    controlBar
                 }
-                .animation(.snappy(duration: 0.24), value: replay.progress)
-            controlBar
+                .padding(24)
+            }
         }
-        .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground))
         .sheet(isPresented: $isFENTransferPresented) {
             FENTransferSheet(game: game)
         }
         .sheet(isPresented: $isPieceGalleryPresented) {
             PieceGalleryView(palette: piecePalette)
+        }
+        .onChange(of: isPieceGalleryPresented) { _, isPresented in
+            if isPresented, replay.isPlaying {
+                replay.stop(in: game)
+            }
         }
         .sheet(isPresented: $isGameBrowserPresented) {
             GameBrowserView(library: gameLibrary, palette: piecePalette) { stored in
