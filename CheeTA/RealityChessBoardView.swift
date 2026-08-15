@@ -104,9 +104,24 @@ struct RealityChessBoardView: View {
                     cameraState.apply()
                 }
         )
-        .simultaneousGesture(
-            MagnificationGesture()
-                .onChanged { magnification in
+        .gesture(
+            TwoFingerPanRecognizer(
+                onChanged: { translation in
+                    if !cameraState.isPanning {
+                        cameraState.beginPan()
+                    }
+                    cameraState.pan(by: translation)
+                    cameraState.apply()
+                },
+                onEnded: {
+                    cameraState.endPan()
+                    cameraState.apply()
+                }
+            )
+        )
+        .gesture(
+            PinchZoomRecognizer(
+                onChanged: { magnification in
                     if !cameraState.isPinching {
                         cameraState.isPinching = true
                         cameraState.startDistance = cameraState.distance
@@ -115,14 +130,15 @@ struct RealityChessBoardView: View {
                         cameraState.startDistance / Float(magnification)
                     )
                     cameraState.apply()
-                }
-                .onEnded { magnification in
+                },
+                onEnded: { magnification in
                     cameraState.distance = cameraState.clampedDistance(
                         cameraState.startDistance / Float(magnification)
                     )
                     cameraState.isPinching = false
                     cameraState.apply()
                 }
+            )
         )
         .background(
             LinearGradient(
@@ -141,7 +157,7 @@ struct RealityChessBoardView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Interactive 3D chess board")
-        .accessibilityHint("Tap a piece and then a highlighted square to move. Drag left or right to orbit, drag up or down to elevate, and pinch to zoom.")
+        .accessibilityHint("Tap a piece and then a highlighted square to move. Drag to orbit, pinch to zoom, and slide with two fingers to pan toward a corner.")
     }
 }
 
@@ -200,21 +216,27 @@ struct PiecePalette: Equatable {
 
 @MainActor
 private final class BoardCameraState {
-    private let target: SIMD3<Float> = [0, 0.25, 0]
-    private let minimumElevation: Float = .pi / 10
+    /// Square centers sit at ±3.5; a little past that puts the look-at
+    /// behind a corner piece so you can sight along its file or diagonal.
+    private let homeTarget: SIMD3<Float> = [0, 0.45, 0]
+    private let maximumPan: Float = 5.2
+    private let minimumElevation: Float = .pi / 20
     private let maximumElevation: Float = .pi * 0.39
-    private let minimumDistance: Float = 8.4
+    private let minimumDistance: Float = 6.8
     private let maximumDistance: Float = 17
 
     var camera: PerspectiveCamera?
+    var target: SIMD3<Float> = [0, 0.45, 0]
     var yaw: Float = 0
     var elevation: Float = .pi * 0.23
     var distance: Float = 12.4
     var startYaw: Float = 0
     var startElevation: Float = .pi * 0.23
     var startDistance: Float = 12.4
+    var startTarget: SIMD3<Float> = [0, 0.45, 0]
     var isDragging = false
     var isPinching = false
+    var isPanning = false
 
     func clampedElevation(_ value: Float) -> Float {
         min(max(value, minimumElevation), maximumElevation)
@@ -224,17 +246,120 @@ private final class BoardCameraState {
         min(max(value, minimumDistance), maximumDistance)
     }
 
+    func beginPan() {
+        isPanning = true
+        startTarget = target
+    }
+
+    func endPan() {
+        isPanning = false
+    }
+
+    /// Two-finger drag, in the current view's plane: the board follows the
+    /// fingers so a zoomed corner can be pulled into frame.
+    func pan(by screenDelta: CGSize) {
+        let scale = distance * 0.0016
+        let right = SIMD3<Float>(cos(yaw), 0, -sin(yaw))
+        let intoScene = SIMD3<Float>(-sin(yaw), 0, -cos(yaw))
+        let world = right * (Float(screenDelta.width) * scale)
+            + intoScene * (-Float(screenDelta.height) * scale)
+        target = clampedTarget(startTarget + world)
+    }
+
+    func clampedTarget(_ value: SIMD3<Float>) -> SIMD3<Float> {
+        SIMD3(
+            min(max(value.x, -maximumPan), maximumPan),
+            homeTarget.y,
+            min(max(value.z, -maximumPan), maximumPan)
+        )
+    }
+
     func apply() {
         guard let camera else { return }
 
         let horizontalDistance = cos(elevation) * distance
         let verticalDistance = sin(elevation) * distance
         let position: SIMD3<Float> = [
-            sin(yaw) * horizontalDistance,
+            target.x + sin(yaw) * horizontalDistance,
             target.y + verticalDistance,
-            cos(yaw) * horizontalDistance
+            target.z + cos(yaw) * horizontalDistance
         ]
         camera.look(at: target, from: position, relativeTo: nil)
+    }
+}
+
+/// Two-finger drag. One finger still belongs to orbit.
+private struct TwoFingerPanRecognizer: UIGestureRecognizerRepresentable {
+    var onChanged: (CGSize) -> Void
+    var onEnded: () -> Void
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> SimultaneousGestureCoordinator {
+        SimultaneousGestureCoordinator()
+    }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.minimumNumberOfTouches = 2
+        pan.maximumNumberOfTouches = 2
+        pan.cancelsTouchesInView = false
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func handleUIGestureRecognizerAction(
+        _ recognizer: UIPanGestureRecognizer,
+        context: Context
+    ) {
+        let translation = recognizer.translation(in: recognizer.view)
+        switch recognizer.state {
+        case .began, .changed:
+            onChanged(CGSize(width: translation.x, height: translation.y))
+        case .ended, .cancelled, .failed:
+            onChanged(CGSize(width: translation.x, height: translation.y))
+            onEnded()
+        default:
+            break
+        }
+    }
+}
+
+/// Pinch zoom that can run at the same time as a two-finger pan.
+private struct PinchZoomRecognizer: UIGestureRecognizerRepresentable {
+    var onChanged: (CGFloat) -> Void
+    var onEnded: (CGFloat) -> Void
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> SimultaneousGestureCoordinator {
+        SimultaneousGestureCoordinator()
+    }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPinchGestureRecognizer {
+        let pinch = UIPinchGestureRecognizer()
+        pinch.cancelsTouchesInView = false
+        pinch.delegate = context.coordinator
+        return pinch
+    }
+
+    func handleUIGestureRecognizerAction(
+        _ recognizer: UIPinchGestureRecognizer,
+        context: Context
+    ) {
+        switch recognizer.state {
+        case .began, .changed:
+            onChanged(recognizer.scale)
+        case .ended, .cancelled, .failed:
+            onEnded(recognizer.scale)
+        default:
+            break
+        }
+    }
+}
+
+private final class SimultaneousGestureCoordinator: NSObject, UIGestureRecognizerDelegate {
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        true
     }
 }
 

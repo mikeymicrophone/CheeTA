@@ -8,8 +8,8 @@ final class PlyNotationTests: XCTestCase {
         play("e2", "e4", in: game)
         play("g8", "f6", in: game)
 
-        XCTAssertEqual(PlyNotation.coordinate(game.plies[0]), "e2–e4")
-        XCTAssertEqual(PlyNotation.coordinate(game.plies[1]), "Ng8–f6")
+        XCTAssertEqual(PlyNotation.coordinate(game.plies[0]), "Pawn e2–e4")
+        XCTAssertEqual(PlyNotation.coordinate(game.plies[1]), "Knight g8–f6")
     }
 
     func testCaptureAndCheckSuffixes() {
@@ -18,7 +18,7 @@ final class PlyNotationTests: XCTestCase {
         play("d7", "d5", in: game)
         play("e4", "d5", in: game)
 
-        XCTAssertEqual(PlyNotation.coordinate(game.plies[2]), "e4×d5")
+        XCTAssertEqual(PlyNotation.coordinate(game.plies[2]), "Pawn e4×d5")
     }
 
     func testCastlingNotation() throws {
@@ -32,7 +32,7 @@ final class PlyNotationTests: XCTestCase {
             castlingRights: .standard
         )
         play("e1", "g1", in: game)
-        XCTAssertEqual(PlyNotation.coordinate(game.plies[0]), "O-O")
+        XCTAssertEqual(PlyNotation.coordinate(game.plies[0]), "King O-O")
     }
 
     func testPromotionNotation() throws {
@@ -41,7 +41,7 @@ final class PlyNotationTests: XCTestCase {
         game.tap(Square("a7")!)
         game.tap(Square("a8")!)
         game.promote(to: .queen)
-        XCTAssertEqual(PlyNotation.coordinate(game.plies[0]), "a7–a8=Q")
+        XCTAssertEqual(PlyNotation.coordinate(game.plies[0]), "Pawn a7–a8=Q")
     }
 
     func testRowGroupingFromBlackToMoveAndHighFullMove() throws {
@@ -54,9 +54,9 @@ final class PlyNotationTests: XCTestCase {
         XCTAssertEqual(rows.count, 2)
         XCTAssertEqual(rows[0].moveNumber, 42)
         XCTAssertNil(rows[0].white)
-        XCTAssertEqual(rows[0].black?.notation, "Ke8–e7")
+        XCTAssertEqual(rows[0].black?.notation, "King e8–e7")
         XCTAssertEqual(rows[1].moveNumber, 43)
-        XCTAssertEqual(rows[1].white?.notation, "Ke1–e2")
+        XCTAssertEqual(rows[1].white?.notation, "King e1–e2")
     }
 
     func testOpeningFENSurvivesPlayAndReset() throws {

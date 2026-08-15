@@ -20,6 +20,8 @@ enum PieceKind: String, CaseIterable, Hashable, Sendable {
     case bishop
     case knight
     case pawn
+
+    var displayName: String { rawValue.capitalized }
 }
 
 struct Piece: Hashable, Sendable {

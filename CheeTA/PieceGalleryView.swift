@@ -354,8 +354,6 @@ private final class InspectionRig {
 private extension PieceKind {
     static let galleryOrder: [PieceKind] = [.pawn, .knight, .bishop, .rook, .queen, .king]
 
-    var displayName: String { rawValue.capitalized }
-
     var shortName: String {
         switch self {
         case .pawn: "Pawn"

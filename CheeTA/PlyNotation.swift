@@ -44,17 +44,18 @@ struct HistoryRow: Identifiable, Equatable, Sendable {
 
 enum PlyNotation {
     static func coordinate(_ ply: RecordedPly) -> String {
+        let piece = movingKind(ply).displayName
         let body: String
         if let side = castlingSide(of: ply) {
-            body = side == .kingSide ? "O-O" : "O-O-O"
+            body = "\(piece) \(side == .kingSide ? "O-O" : "O-O-O")"
         } else if let promotion = ply.move.promotion {
-            body = "\(ply.move.from.algebraic)\(ply.capture == nil ? "–" : "×")\(ply.move.to.algebraic)=\(letter(for: promotion))"
+            body = "\(piece) \(ply.move.from.algebraic)\(ply.capture == nil ? "–" : "×")\(ply.move.to.algebraic)=\(letter(for: promotion))"
         } else if ply.move.isEnPassant {
-            body = "\(ply.move.from.algebraic)×\(ply.move.to.algebraic) e.p."
+            body = "\(piece) \(ply.move.from.algebraic)×\(ply.move.to.algebraic) e.p."
         } else if ply.capture != nil {
-            body = "\(moverLetter(ply))\(ply.move.from.algebraic)×\(ply.move.to.algebraic)"
+            body = "\(piece) \(ply.move.from.algebraic)×\(ply.move.to.algebraic)"
         } else {
-            body = "\(moverLetter(ply))\(ply.move.from.algebraic)–\(ply.move.to.algebraic)"
+            body = "\(piece) \(ply.move.from.algebraic)–\(ply.move.to.algebraic)"
         }
 
         if case .checkmate = ply.statusAfter {
@@ -74,14 +75,7 @@ enum PlyNotation {
             return "\(side) king \(castleWords)\(suffixWords(ply))"
         }
 
-        let pieceWords: String
-        if ply.move.promotion != nil {
-            pieceWords = "pawn"
-        } else if let piece = ply.boardAfter[ply.move.to] {
-            pieceWords = piece.kind.rawValue
-        } else {
-            pieceWords = "piece"
-        }
+        let pieceWords = movingKind(ply).rawValue
 
         var phrase = "\(side) \(pieceWords) from \(ply.move.from.algebraic) to \(ply.move.to.algebraic)"
         if ply.move.isEnPassant {
@@ -139,9 +133,9 @@ enum PlyNotation {
         return nil
     }
 
-    private static func moverLetter(_ ply: RecordedPly) -> String {
-        guard let piece = ply.boardAfter[ply.move.to] else { return "" }
-        return letter(for: piece.kind)
+    static func movingKind(_ ply: RecordedPly) -> PieceKind {
+        if ply.move.promotion != nil { return .pawn }
+        return ply.boardAfter[ply.move.to]?.kind ?? .pawn
     }
 
     private static func letter(for kind: PieceKind) -> String {
